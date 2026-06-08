@@ -1,0 +1,20 @@
+{
+  "name": "kids-book-factory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cover-preview backend for the kids-book Shopify theme (preview slice). Generates a personalised book cover (child's face on the book cover) via fal.ai FLUX Kontext.",
+  "type": "module",
+  "scripts": {
+    "deploy": "vercel deploy --prod"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.624.0",
+    "@aws-sdk/s3-request-presigner": "^3.624.0",
+    "@fal-ai/client": "^1.2.0",
+    "@upstash/ratelimit": "^2.0.3",
+    "@upstash/redis": "^1.34.0"
+  },
+  "devDependencies": {
+    "@vercel/node": "^3.2.0"
+  }
+}

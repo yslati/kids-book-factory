@@ -1,0 +1,13 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/preview.js": { "maxDuration": 60 },
+    "api/upload-url.js": { "maxDuration": 15 },
+    "api/preview-status/[id].js": { "maxDuration": 15 }
+  },
+  "rewrites": [
+    { "source": "/upload-url", "destination": "/api/upload-url" },
+    { "source": "/preview", "destination": "/api/preview" },
+    { "source": "/preview-status/:id", "destination": "/api/preview-status/:id" }
+  ]
+}
