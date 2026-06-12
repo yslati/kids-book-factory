@@ -37,6 +37,9 @@ export default async function handler(req, res) {
   const photoKey = String(body.photo_key || '').trim();
   const generationId = String(body.generation_id || '').trim();
   const language = String(body.language || 'en').trim();
+  const childName = String(body.child_name || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 40);
+  const ageNum = parseInt(body.age, 10);
+  const ageText = Number.isFinite(ageNum) && ageNum >= 0 && ageNum <= 18 ? String(ageNum) : '';
 
   if (!themeId || !photoKey || !generationId) {
     return res.status(400).json({ error: 'missing-fields' });
@@ -58,6 +61,14 @@ export default async function handler(req, res) {
     let prompt = book.prompt;
     if (language && language !== 'en') {
       prompt += '\n\nBook language: ' + language + '. Any title text should be in this language.';
+    }
+    if (childName) {
+      prompt += '\n\nPersonalise the cover: the child\'s first name is "' + childName +
+        '". If the title shows a character or placeholder name, change it to read "' + childName +
+        '" in the same font, size, colour, and position. Do not change any other words or letters.';
+    }
+    if (ageText) {
+      prompt += '\n\nThe child is ' + ageText + ' years old; make the main character look like a child of about this age.';
     }
 
     const childUrl = publicUrl(photoKey);
