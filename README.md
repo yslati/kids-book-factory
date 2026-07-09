@@ -1,6 +1,6 @@
-# kids-book-factory — cover-preview backend
+# kids-book-factory - cover-preview backend
 
-Vercel backend for the kids-book Shopify theme. Puts a child's face on a book's cover (via fal.ai) so the storefront can show a preview before checkout. This is the **preview slice** only — post-purchase print/PDF/Gelato is out of scope.
+Vercel backend for the kids-book Shopify theme. Puts a child's face on a book's cover (via fal.ai) so the storefront can show a preview before checkout. This is the **preview slice** only - post-purchase print/PDF/Gelato is out of scope.
 
 ## Flow
 
@@ -12,16 +12,16 @@ POST /api/preview     → resolve cover+prompt by theme_id (Shopify) → fal Kon
                       → { preview_url, generation_id, status: 'ready' }
 ```
 
-- **fal model:** `fal-ai/flux-pro/kontext/max/multi` — multi-image (`[cover, child]`) so it can place the face on the existing cover.
+- **fal model:** `fal-ai/flux-pro/kontext/max/multi` - multi-image (`[cover, child]`) so it can place the face on the existing cover.
 - **Anti-tamper:** the browser never sends the prompt or cover; the backend reads them from the product's metafields by `theme_id`. New product → no backend change.
 - **Synchronous**, one retry, `maxDuration` 60s. Generated cover persisted to R2 (fal URLs are temporary).
 - Missing env vars degrade to `503 *-not-configured`; Turnstile + rate-limiting no-op until configured.
 
 ## Endpoints
 
-- `POST /api/upload-url` — validate + presign an R2 PUT.
-- `POST /api/preview` — resolve book → generate → store → return `preview_url`.
-- `GET /api/preview-status/<id>` — resilience fallback (sync path returns `ready` directly).
+- `POST /api/upload-url` - validate + presign an R2 PUT.
+- `POST /api/preview` - resolve book → generate → store → return `preview_url`.
+- `GET /api/preview-status/<id>` - resilience fallback (sync path returns `ready` directly).
 
 ## Setup
 
