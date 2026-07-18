@@ -32,7 +32,7 @@ npx vercel dev         # local, http://localhost:3000
 npx vercel deploy --prod
 ```
 
-Env (see `.env.example`): `FAL_KEY`, `R2_*` (+ public bucket URL), `SHOPIFY_SHOP` + `SHOPIFY_ADMIN_TOKEN` (scope `read_products`), `TURNSTILE_SECRET`, `UPSTASH_*`, `ALLOWED_ORIGIN`. Add the same values in the Vercel project, then put the deployed URL in the theme section's **Backend URL** setting.
+Env (see `.env.example`): `FAL_KEY`, `R2_*` (+ public bucket URL), `SHOPIFY_SHOP` + `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET` (scope `read_products`), `TURNSTILE_SECRET`, `UPSTASH_*`, `ALLOWED_ORIGIN`. The backend obtains and refreshes Shopify's short-lived Admin API token automatically. Add the same values in the Vercel project, then put the deployed URL in the theme section's **Backend URL** setting.
 
 Smoke test:
 ```bash
