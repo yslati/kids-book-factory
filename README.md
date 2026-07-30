@@ -41,7 +41,7 @@ curl -i -X POST http://localhost:3000/api/upload-url \
   -d '{"filename":"a.jpg","content_type":"image/jpeg","size":12345,"theme_id":"boy-book-7"}'
 ```
 
-Shopify-side setup (page handle `my-book`, Cover variants, `book.*` metafields) is in the theme's `docs/04-shopify-setup.md`.
+Shopify-side setup (page handle `create-your-book`, Cover variants, `book.*` metafields) is in the theme's `docs/04-shopify-setup.md`.
 
 ## Cost
 
