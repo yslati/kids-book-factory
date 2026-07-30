@@ -17,6 +17,7 @@ import { checkRateLimit, clientIp } from '../lib/ratelimit.js';
 import { publicUrl, putObject, r2Configured } from '../lib/r2.js';
 import { resolveBook, shopifyConfigured } from '../lib/shopify.js';
 import { generateCover } from '../lib/fal.js';
+import { resolveBookLanguage } from '../lib/book-languages.js';
 
 export default async function handler(req, res) {
   if (applyCors(req, res)) return;
@@ -36,13 +37,16 @@ export default async function handler(req, res) {
   const themeId = String(body.theme_id || '').trim();
   const photoKey = String(body.photo_key || '').trim();
   const generationId = String(body.generation_id || '').trim();
-  const language = String(body.language || 'en').trim();
+  const language = resolveBookLanguage(body.language);
   const childName = String(body.child_name || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 40);
   const ageNum = parseInt(body.age, 10);
   const ageText = Number.isFinite(ageNum) && ageNum >= 0 && ageNum <= 18 ? String(ageNum) : '';
 
   if (!themeId || !photoKey || !generationId) {
     return res.status(400).json({ error: 'missing-fields' });
+  }
+  if (!language) {
+    return res.status(400).json({ error: 'unsupported-language' });
   }
   // photo_key must be one we issued (prevents pointing us at arbitrary objects).
   if (!/^photos\/[A-Za-z0-9-]+\.(jpg|png)$/.test(photoKey)) {
@@ -59,13 +63,14 @@ export default async function handler(req, res) {
     // 2. Resolve cover + prompt from the product's own metafields.
     const book = await resolveBook(themeId);
     let prompt = book.prompt;
-    if (language && language !== 'en') {
-      prompt += '\n\nBook language: ' + language + '. Any title text should be in this language.';
-    }
+    prompt += '\n\nBook language: ' + language.name + ' (' + language.code + '). ' +
+      'Translate all visible cover text into this language while preserving the ' +
+      'existing typography, layout, colours, and the child\'s name.';
     if (childName) {
       prompt += '\n\nPersonalise the cover: the child\'s first name is "' + childName +
         '". If the title shows a character or placeholder name, change it to read "' + childName +
-        '" in the same font, size, colour, and position. Do not change any other words or letters.';
+        '" in the same font, size, colour, and position. Apart from the requested ' +
+        'language translation, do not change any other words or letters.';
     }
     if (ageText) {
       prompt += '\n\nThe child is ' + ageText + ' years old; make the main character look like a child of about this age.';

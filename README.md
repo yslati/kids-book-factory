@@ -14,6 +14,7 @@ POST /api/preview     → resolve cover+prompt by theme_id (Shopify) → fal Kon
 
 - **fal model:** `fal-ai/flux-pro/kontext/max/multi` - multi-image (`[cover, child]`) so it can place the face on the existing cover.
 - **Anti-tamper:** the browser never sends the prompt or cover; the backend reads them from the product's metafields by `theme_id`. New product → no backend change.
+- **Book languages:** `en`, `es`, `fr`, `de`, `it`, and `pt`. The preview API rejects other values and asks the image model to translate visible cover text into the selected language.
 - **Synchronous**, one retry, `maxDuration` 60s. Generated cover persisted to R2 (fal URLs are temporary).
 - Missing env vars degrade to `503 *-not-configured`; Turnstile + rate-limiting no-op until configured.
 

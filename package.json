@@ -5,7 +5,8 @@
   "description": "Cover-preview backend for the kids-book Shopify theme (preview slice). Generates a personalised book cover (child's face on the book cover) via fal.ai FLUX Kontext.",
   "type": "module",
   "scripts": {
-    "deploy": "vercel deploy --prod"
+    "deploy": "vercel deploy --prod",
+    "test": "node --test"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.624.0",
