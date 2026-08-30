@@ -25,8 +25,8 @@
       "destination": "/api/preview-status/:id"
     },
     {
-      "source": "/_limitdebug",
-      "destination": "/api/_limitdebug"
+      "source": "/limitdebug",
+      "destination": "/api/limitdebug"
     }
   ]
 }
