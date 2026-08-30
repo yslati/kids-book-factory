@@ -1,11 +1,13 @@
 // POST /api/preview  (synchronous, resilient)
 // Generates the personalised cover and returns its permanent URL.
 //
-// Body: { theme_id, photo_key, generation_id, child_name, age, language, turnstile_token }
-// → { preview_url, generation_id, status: 'ready' }
+// Body: { theme_id, photo_key, generation_id, child_name, age, language, turnstile_token,
+//         customer_id?, token_date?, customer_token? }
+// → { preview_url, generation_id, status: 'ready', remaining }
+// 429 → { error: 'rate-limited', login_required, remaining: 0 }
 //
 // Flow:
-//   1. Verify origin + Turnstile + rate limit.
+//   1. Verify origin + Turnstile + rate limit (per-customer tier when signed in).
 //   2. Resolve cover + prompt SERVER-SIDE from Shopify by theme_id (anti-tamper).
 //   3. Generate via fal Kontext multi ([cover, child] + prompt), one retry.
 //   4. Persist the generated cover to R2 (fal URLs are temporary).
@@ -18,6 +20,15 @@ import { publicUrl, putObject, r2Configured } from '../lib/r2.js';
 import { resolveBook, shopifyConfigured } from '../lib/shopify.js';
 import { generateCover } from '../lib/fal.js';
 import { resolveBookLanguage } from '../lib/book-languages.js';
+import { verifyCustomerToken } from '../lib/customer-token.js';
+import { tagCustomerPreviewLimit } from '../lib/customer-tag.js';
+
+// Both limiters return null when limiting is disabled; only compare real numbers.
+function minRemaining(a, b) {
+  if (typeof a !== 'number') return typeof b === 'number' ? b : null;
+  if (typeof b !== 'number') return a;
+  return Math.min(a, b);
+}
 
 export default async function handler(req, res) {
   if (applyCors(req, res)) return;
@@ -56,8 +67,34 @@ export default async function handler(req, res) {
   const ok = await verifyTurnstile(body.turnstile_token, clientIp(req));
   if (!ok) return res.status(403).json({ error: 'challenge-failed' });
 
-  const rl = await checkRateLimit(req, 'preview');
-  if (!rl.success) return res.status(429).json({ error: 'rate-limited' });
+  // Tier selection: a valid signed token buys the higher per-customer
+  // allowance; everyone else gets the anonymous per-IP allowance and is
+  // invited to sign in. `login_required` drives which message the theme shows.
+  const customer = verifyCustomerToken(body);
+  const bucket = customer.valid ? 'preview-cust' : 'preview';
+  const rl = await checkRateLimit(req, bucket, customer.valid ? customer.customerId : null);
+
+  // Per-IP backstop, enforced for everyone including verified customers, so a
+  // single machine can't multiply free previews with throwaway accounts.
+  // Checked even when the tier limit already denied, so both windows stay in
+  // step - a denied request shouldn't leave the cap un-decremented.
+  const capped = await checkRateLimit(req, 'preview-ip-cap');
+
+  if (!rl.success || !capped.success) {
+    // A verified customer who has run out - by their own allowance or by the
+    // shared IP cap - is our warmest lead. Tag them for the follow-up email.
+    // Fire-and-forget: a tagging failure must not change this response.
+    if (customer.valid) {
+      try {
+        await tagCustomerPreviewLimit(customer.customerId);
+      } catch (e) { /* never surfaces */ }
+    }
+    return res.status(429).json({
+      error: 'rate-limited',
+      login_required: !customer.valid,
+      remaining: 0
+    });
+  }
 
   try {
     // 2. Resolve cover + prompt from the product's own metafields.
@@ -105,7 +142,10 @@ export default async function handler(req, res) {
     return res.status(200).json({
       preview_url: previewUrl,
       generation_id: generationId,
-      status: 'ready'
+      status: 'ready',
+      // The tighter of the two windows - that's the number that will actually
+      // stop them. null when rate limiting is disabled (theme hides the counter).
+      remaining: minRemaining(rl.remaining, capped.remaining)
     });
   } catch (err) {
     const code = (err && err.message) || 'preview-failed';
