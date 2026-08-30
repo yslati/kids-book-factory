@@ -23,10 +23,6 @@
     {
       "source": "/preview-status/:id",
       "destination": "/api/preview-status/:id"
-    },
-    {
-      "source": "/limitdebug",
-      "destination": "/api/limitdebug"
     }
   ]
 }
