@@ -110,7 +110,9 @@ export default async function handler(req, res) {
         'language translation, do not change any other words or letters.';
     }
     if (ageText) {
-      prompt += '\n\nThe child is ' + ageText + ' years old; make the main character look like a child of about this age.';
+      prompt += '\n\nThe child is ' + ageText + ' years old. Use this only to set the '
+        + 'character\'s body proportions and height; the face must still come from the '
+        + 'photo, not from a generic child of that age.';
     }
 
     const childUrl = publicUrl(photoKey);
