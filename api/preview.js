@@ -22,6 +22,7 @@ import { generateCover } from '../lib/fal.js';
 import { resolveBookLanguage } from '../lib/book-languages.js';
 import { verifyCustomerToken } from '../lib/customer-token.js';
 import { tagCustomerPreviewLimit } from '../lib/customer-tag.js';
+import { savePreviews } from '../lib/user-previews.js';
 
 // Both limiters return null when limiting is disabled; only compare real numbers.
 function minRemaining(a, b) {
@@ -139,6 +140,25 @@ export default async function handler(req, res) {
       // If persistence fails, fall back to the (temporary) fal URL so the user
       // still sees a preview; the order record should prefer the R2 copy.
       previewUrl = falUrl;
+    }
+
+    // Record it against the account when the shopper is signed in, so their
+    // previews follow them to another device. Fire-and-forget: this is a
+    // convenience, and a Redis problem must never fail a paid generation.
+    if (customer.valid) {
+      try {
+        await savePreviews(customer.customerId, [{
+          k: generationId,
+          // The product handle. The display slug that goes in ?b= is built in
+          // the theme, so the client fills `book` in when it syncs.
+          themeId: themeId,
+          bookTitle: book.title || '',
+          childName: childName,
+          age: ageText,
+          coverUrl: previewUrl,
+          createdAt: new Date().toISOString()
+        }]);
+      } catch (e) { /* never surfaces */ }
     }
 
     return res.status(200).json({

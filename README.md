@@ -24,7 +24,7 @@ Free previews cost real money, so the allowance is tiered. All windows are 24h s
 
 | Tier | Keyed by | `/preview` | `/upload-url` |
 | --- | --- | --- | --- |
-| Anonymous | IP | 2 | 6 |
+| Anonymous | IP | 3 | 6 |
 | Verified customer | customer id | 3 | 8 |
 | Backstop (everyone, incl. logged in) | IP | 8 | — |
 

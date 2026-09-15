@@ -9,6 +9,9 @@
     },
     "api/preview-status/[id].js": {
       "maxDuration": 15
+    },
+    "api/me/previews.js": {
+      "maxDuration": 15
     }
   },
   "rewrites": [
@@ -23,6 +26,10 @@
     {
       "source": "/preview-status/:id",
       "destination": "/api/preview-status/:id"
+    },
+    {
+      "source": "/me/previews",
+      "destination": "/api/me/previews"
     }
   ]
 }
