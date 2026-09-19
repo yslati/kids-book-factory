@@ -36,7 +36,7 @@ The secret must match in **two** places:
 
 If `PREVIEW_TOKEN_SECRET` is unset the feature is simply off: every token is treated as invalid and everyone gets the anonymous tier. Nothing crashes.
 
-**Responses.** A `429` carries `login_required: true` for anonymous visitors (the theme shows a sign-in invitation) and `false` for a verified customer who has spent their own allowance. Successful `/preview` responses carry `remaining`, the tighter of the tier and backstop windows, so the theme can show "X previews left today"; it is `null` when limiting is disabled.
+**Responses.** A `429` carries `login_required: true` for anonymous visitors (the theme shows a sign-in invitation) and `false` for a verified customer who has spent their own allowance. Successful `/preview` responses carry `remaining`, the tighter of the tier and backstop windows; it is `null` when limiting is disabled. The theme does not surface it - there is no preview counter in the UI.
 
 **Marketing tag.** When a *verified* customer gets a `429` on `/preview`, `lib/customer-tag.js` adds the tag `preview-limit-hit` to them via Admin GraphQL `tagsAdd`. This needs the **`write_customers`** scope on the Shopify app (in addition to `read_products`). The call is fire-and-forget inside a `try/catch` - a missing scope or a Shopify outage logs and is otherwise invisible to the shopper.
 
