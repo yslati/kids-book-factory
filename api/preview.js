@@ -9,8 +9,9 @@
 // Flow:
 //   1. Verify origin + Turnstile + rate limit (per-customer tier when signed in).
 //   2. Resolve cover + prompt SERVER-SIDE from Shopify by theme_id (anti-tamper).
-//   3. Generate via fal Kontext multi ([cover, child] + prompt), one retry.
-//   4. Persist the generated cover to R2 (fal URLs are temporary).
+//   3. Generate ([cover, child] + prompt) via lib/generate.js: fal Nano Banana 2,
+//      or Higgsfield when fal's balance is <= $0.10 or fal fails.
+//   4. Persist the generated cover to R2 (provider URLs are temporary).
 //   5. Return the permanent R2 url.
 
 import { applyCors, isOriginAllowed } from '../lib/cors.js';
@@ -18,11 +19,15 @@ import { verifyTurnstile } from '../lib/turnstile.js';
 import { checkRateLimit, clientIp } from '../lib/ratelimit.js';
 import { publicUrl, putObject, r2Configured } from '../lib/r2.js';
 import { resolveBook, shopifyConfigured } from '../lib/shopify.js';
-import { generateCover } from '../lib/fal.js';
+import { generateCover, generationConfigured } from '../lib/generate.js';
 import { resolveBookLanguage } from '../lib/book-languages.js';
 import { verifyCustomerToken } from '../lib/customer-token.js';
 import { tagCustomerPreviewLimit } from '../lib/customer-tag.js';
 import { savePreviews } from '../lib/user-previews.js';
+
+// vercel.json gives this function 60s. Generation must finish within 50s of
+// the request arriving, leaving time to copy the cover to R2 and respond.
+const GENERATION_BUDGET_MS = 50000;
 
 // Both limiters return null when limiting is disabled; only compare real numbers.
 function minRemaining(a, b) {
@@ -32,13 +37,14 @@ function minRemaining(a, b) {
 }
 
 export default async function handler(req, res) {
+  const startedAt = Date.now();
   if (applyCors(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'method-not-allowed' });
   if (!isOriginAllowed(req)) return res.status(403).json({ error: 'forbidden-origin' });
 
   if (!r2Configured()) return res.status(503).json({ error: 'storage-not-configured' });
   if (!shopifyConfigured()) return res.status(503).json({ error: 'shopify-not-configured' });
-  if (!process.env.FAL_KEY) return res.status(503).json({ error: 'fal-not-configured' });
+  if (!generationConfigured()) return res.status(503).json({ error: 'generation-not-configured' });
 
   let body = req.body;
   if (typeof body === 'string') {
@@ -118,18 +124,18 @@ export default async function handler(req, res) {
 
     const childUrl = publicUrl(photoKey);
 
-    // 3. Generate, with one retry on transient failure.
-    let falUrl;
-    try {
-      falUrl = await generateCover(book.coverUrl, childUrl, prompt);
-    } catch (firstErr) {
-      falUrl = await generateCover(book.coverUrl, childUrl, prompt);
-    }
+    // 3. Generate. lib/generate.js picks the provider and falls back (or
+    //    retries) on failure.
+    const generated = await generateCover(book.coverUrl, childUrl, prompt, {
+      coverAspect: book.coverAspect,
+      deadline: startedAt + GENERATION_BUDGET_MS
+    });
+    const generatedUrl = generated.url;
 
     // 4. Persist the generated cover to R2 (permanent).
-    let previewUrl = falUrl;
+    let previewUrl = generatedUrl;
     try {
-      const imgRes = await fetch(falUrl);
+      const imgRes = await fetch(generatedUrl);
       if (imgRes.ok) {
         const buf = Buffer.from(await imgRes.arrayBuffer());
         const ct = imgRes.headers.get('content-type') || 'image/jpeg';
@@ -137,9 +143,9 @@ export default async function handler(req, res) {
         previewUrl = await putObject(`previews/${generationId}.${ext}`, buf, ct);
       }
     } catch (storeErr) {
-      // If persistence fails, fall back to the (temporary) fal URL so the user
-      // still sees a preview; the order record should prefer the R2 copy.
-      previewUrl = falUrl;
+      // If persistence fails, fall back to the (temporary) provider URL so the
+      // user still sees a preview; the order record should prefer the R2 copy.
+      previewUrl = generatedUrl;
     }
 
     // Record it against the account when the shopper is signed in, so their
