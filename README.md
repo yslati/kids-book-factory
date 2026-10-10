@@ -8,14 +8,19 @@ Vercel backend for the kids-book Shopify theme. Puts a child's face on a book's 
 Browser            this backend                      external
 POST /api/upload-url  → Turnstile + rate-limit → presign R2 PUT → { presigned_put_url, photo_key, generation_id }
 PUT photo             → Cloudflare R2
-POST /api/preview     → resolve cover+prompt by theme_id (Shopify) → fal Nano Banana 2 edit → store cover in R2
+POST /api/preview     → resolve cover+prompt by theme_id (Shopify) → fal Nano Banana 2 edit (or Higgsfield) → store cover in R2
                       → { preview_url, generation_id, status: 'ready', remaining }
 ```
 
 - **fal model:** `fal-ai/nano-banana-2/edit` (Google Gemini 3.1 Flash Image) - multi-image (`[cover, child]`) so it can redraw the existing cover's character as the child. Flat $0.08/image at the `1K` resolution we request.
+- **Higgsfield fallback:** `marketing-studio/image` (Marketing Studio Image 2.0, `quality: low`) on the Higgsfield API, same `[cover, child]` input. Billed by tokens: ~$0.061/image at `1k` with the default ~3,700-character prompt (check longer per-book prompts with Higgsfield's free `POST /estimate/marketing-studio/image`). Prompts are capped at 5,000 characters. Higgsfield has no Nano Banana, so the fallback cover can look a little different. `lib/generate.js` routes:
+  - fal balance **at or below $0.10** → Higgsfield first, fal as its backup. Needs `FAL_BILLING_KEY`; the balance is re-read at most once a minute.
+  - otherwise fal first; if it fails, or is still running after 30s, Higgsfield gets the rest of the time budget.
+  - only one provider configured → one attempt + one retry on it, as before.
+  - Logs say which provider made each cover: `[generate] cover by fal (fal balance $12.34)`.
 - **Anti-tamper:** the browser never sends the prompt or cover; the backend reads them from the product's metafields by `theme_id`. New product → no backend change.
 - **Book languages:** `en`, `es`, `fr`, `de`, `it`, and `pt`. The preview API rejects other values and asks the image model to translate visible cover text into the selected language.
-- **Synchronous**, one retry, `maxDuration` 60s. Generated cover persisted to R2 (fal URLs are temporary).
+- **Synchronous**, `maxDuration` 60s; generation must finish within 50s of the request. Generated cover persisted to R2 (provider URLs are temporary).
 - Missing env vars degrade to `503 *-not-configured`; Turnstile + rate-limiting no-op until configured.
 
 ## Preview limits & customer sign-in
@@ -61,7 +66,7 @@ npx vercel dev         # local, http://localhost:3000
 npx vercel deploy --prod
 ```
 
-Env (see `.env.example`): `FAL_KEY`, `R2_*` (+ public bucket URL), `SHOPIFY_SHOP` + `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET` (scopes `read_products`, `write_customers`), `TURNSTILE_SECRET`, `UPSTASH_*`, `PREVIEW_TOKEN_SECRET`, `ALLOWED_ORIGIN`. The backend obtains and refreshes Shopify's short-lived Admin API token automatically. Add the same values in the Vercel project, then put the deployed URL in the theme section's **Backend URL** setting.
+Env (see `.env.example`): `FAL_KEY` (+ optional `FAL_BILLING_KEY`, `HIGGSFIELD_KEY` for the fallback), `R2_*` (+ public bucket URL), `SHOPIFY_SHOP` + `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET` (scopes `read_products`, `write_customers`), `TURNSTILE_SECRET`, `UPSTASH_*`, `PREVIEW_TOKEN_SECRET`, `ALLOWED_ORIGIN`. The backend obtains and refreshes Shopify's short-lived Admin API token automatically. Add the same values in the Vercel project, then put the deployed URL in the theme section's **Backend URL** setting.
 
 Smoke test:
 ```bash
@@ -74,4 +79,4 @@ Shopify-side setup (page handle `create-your-book`, Cover variants, `book.*` met
 
 ## Cost
 
-Vercel/R2/Upstash/Turnstile free tiers + $0.08 per preview to fal.ai (Nano Banana 2, `1K`). The tiered limits above cap the worst case at 8 previews/day per IP, i.e. ~$0.64.
+Vercel/R2/Upstash/Turnstile free tiers + $0.08 per preview to fal.ai (Nano Banana 2, `1K`), or ~$0.06 when Higgsfield makes it. The tiered limits above cap the worst case at 8 previews/day per IP, i.e. ~$0.64. A fal attempt that times out can still be billed even when Higgsfield then makes the cover.
