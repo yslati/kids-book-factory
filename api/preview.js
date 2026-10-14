@@ -11,7 +11,8 @@
 //   2. Resolve cover + prompt SERVER-SIDE from Shopify by theme_id (anti-tamper).
 //   3. Generate ([cover, child] + prompt) via lib/generate.js: fal Nano Banana 2,
 //      or Higgsfield when fal's balance is <= $0.10 or fal fails.
-//   4. Persist the generated cover to R2 (provider URLs are temporary).
+//   4. Persist the generated cover to R2 (provider URLs are temporary), named
+//      previews/<name>_<age>_<language>_<book>_<id>.<ext> (lib/object-names.js).
 //   5. Return the permanent R2 url.
 
 import { applyCors, isOriginAllowed } from '../lib/cors.js';
@@ -24,6 +25,7 @@ import { resolveBookLanguage } from '../lib/book-languages.js';
 import { verifyCustomerToken } from '../lib/customer-token.js';
 import { tagCustomerPreviewLimit } from '../lib/customer-tag.js';
 import { savePreviews } from '../lib/user-previews.js';
+import { previewKey } from '../lib/object-names.js';
 
 // vercel.json gives this function 60s. Generation must finish within 50s of
 // the request arriving, leaving time to copy the cover to R2 and respond.
@@ -67,8 +69,12 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'unsupported-language' });
   }
   // photo_key must be one we issued (prevents pointing us at arbitrary objects).
-  if (!/^photos\/[A-Za-z0-9-]+\.(jpg|png)$/.test(photoKey)) {
+  if (!/^photos\/[A-Za-z0-9_-]+\.(jpg|png)$/.test(photoKey)) {
     return res.status(400).json({ error: 'bad-photo-key' });
+  }
+  // generation_id ends up in the cover's object key. Older ids are UUIDs.
+  if (!/^[A-Za-z0-9-]{1,64}$/.test(generationId)) {
+    return res.status(400).json({ error: 'bad-generation-id' });
   }
 
   const ok = await verifyTurnstile(body.turnstile_token, clientIp(req));
@@ -140,7 +146,16 @@ export default async function handler(req, res) {
         const buf = Buffer.from(await imgRes.arrayBuffer());
         const ct = imgRes.headers.get('content-type') || 'image/jpeg';
         const ext = ct.indexOf('png') !== -1 ? 'png' : 'jpg';
-        previewUrl = await putObject(`previews/${generationId}.${ext}`, buf, ct);
+        const key = previewKey({
+          childName: childName,
+          age: ageText,
+          language: language.code,
+          bookTitle: book.title,
+          themeId: themeId,
+          id: generationId,
+          ext: ext
+        });
+        previewUrl = await putObject(key, buf, ct);
       }
     } catch (storeErr) {
       // If persistence fails, fall back to the (temporary) provider URL so the

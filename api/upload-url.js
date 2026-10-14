@@ -3,9 +3,11 @@
 // metadata, and returns a presigned R2 PUT URL the browser uses to upload the
 // child's photo directly to storage.
 //
-// Body: { filename, content_type, size, theme_id, turnstile_token,
-//         customer_id?, token_date?, customer_token? }
+// Body: { filename, content_type, size, theme_id, child_name, age, language,
+//         turnstile_token, customer_id?, token_date?, customer_token? }
 // → { presigned_put_url, photo_key, generation_id }
+// photo_key is named after the child: photos/<name>_<age>_<language>_<id>.<ext>
+// (see lib/object-names.js).
 // 429 → { error: 'rate-limited', login_required, remaining: 0 }
 
 import { applyCors, isOriginAllowed } from '../lib/cors.js';
@@ -13,7 +15,7 @@ import { verifyTurnstile } from '../lib/turnstile.js';
 import { checkRateLimit, clientIp } from '../lib/ratelimit.js';
 import { presignPut, r2Configured } from '../lib/r2.js';
 import { verifyCustomerToken } from '../lib/customer-token.js';
-import { randomUUID } from 'node:crypto';
+import { newGenerationId, photoKey as photoKeyFor } from '../lib/object-names.js';
 
 const MAX_MB = parseInt(process.env.MAX_UPLOAD_MB || '10', 10);
 const ALLOWED_TYPES = ['image/jpeg', 'image/png'];
@@ -60,9 +62,15 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'too-large' });
   }
 
-  const generationId = randomUUID();
+  const generationId = newGenerationId();
   const ext = contentType === 'image/png' ? 'png' : 'jpg';
-  const photoKey = `photos/${generationId}.${ext}`;
+  const photoKey = photoKeyFor({
+    childName: body.child_name,
+    age: body.age,
+    language: body.language,
+    id: generationId,
+    ext
+  });
 
   try {
     const presignedPutUrl = await presignPut(photoKey, contentType);

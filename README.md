@@ -18,6 +18,7 @@ POST /api/preview     → resolve cover+prompt by theme_id (Shopify) → fal Nan
   - otherwise fal first; if it fails, or is still running after 30s, Higgsfield gets the rest of the time budget.
   - only one provider configured → one attempt + one retry on it, as before.
   - Logs say which provider made each cover: `[generate] cover by fal (fal balance $12.34)`.
+- **Object names:** R2 keys are readable. The photo is `photos/<name>_<age>_<language>_<id>.<ext>` and the cover is `previews/<name>_<age>_<language>_<book>_<id>.<ext>`, e.g. `photos/emma_5_en_k3x9p2m7q1.jpg` and `previews/emma_5_en_the-winning-goal_k3x9p2m7q1.jpg`. `<book>` is the product title before its " – Personalized…" suffix. `<id>` is the `generation_id`: 10 random characters shared by the photo and its cover. It stays random because the bucket is public, and those characters are what keep a photo URL unguessable. Names are slugged to plain ASCII. A missing age or language becomes `na`, and a name with no Latin letters becomes `child`. See `lib/object-names.js`.
 - **Anti-tamper:** the browser never sends the prompt or cover; the backend reads them from the product's metafields by `theme_id`. New product → no backend change.
 - **Book languages:** `en`, `es`, `fr`, `de`, `it`, and `pt`. The preview API rejects other values and asks the image model to translate visible cover text into the selected language.
 - **Synchronous**, `maxDuration` 60s; generation must finish within 50s of the request. Generated cover persisted to R2 (provider URLs are temporary).

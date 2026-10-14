@@ -3,9 +3,11 @@
 // The /preview endpoint is synchronous and returns the finished cover directly,
 // so the client only polls this as a resilience fallback if /preview ever
 // responds with status:'queued'. In the current synchronous design that does
-// not happen, so this returns 'ready' if a stored preview exists, else 404.
+// not happen, so this returns 'ready' if a stored preview exists, else 'pending'.
 //
-// If you later move generation to a queue, back this with the DB/job store.
+// Covers are now named after the child and book (lib/object-names.js), so the
+// id alone only finds covers stored under the old previews/<id> names. If you
+// later move generation to a queue, back this with the DB/job store.
 
 import { applyCors, isOriginAllowed } from '../../lib/cors.js';
 import { publicUrl, r2Configured } from '../../lib/r2.js';
