@@ -37,6 +37,21 @@ test('names the cover name_age_language_book_id from the story part of the title
     previewKey({ childName: 'Emma', age: 5, language: 'en', bookTitle: 'The Star Painter - Personalized Creativity Book', id: 'a', ext: 'jpg' }),
     'previews/emma_5_en_the-star-painter_a.jpg'
   );
+  assert.equal(
+    previewKey({ childName: 'Lily', age: 4, language: 'en', bookTitle: 'The Ribbon of Light: Personalized Gymnastics Book for Girls', id: 'a', ext: 'png' }),
+    'previews/lily_4_en_the-ribbon-of-light_a.png'
+  );
+  assert.equal(
+    previewKey({ childName: 'Emma', age: 5, language: 'en', bookTitle: 'The Cloud Train — Personalized Bedtime Book', id: 'a', ext: 'jpg' }),
+    'previews/emma_5_en_the-cloud-train_a.jpg'
+  );
+});
+
+test('uses the whole title, cut to 40 characters, when it has no colon or spaced dash', () => {
+  assert.equal(
+    previewKey({ childName: 'Lily', age: 4, language: 'en', bookTitle: 'The Ribbon of Light Personalized Gymnastics Book for Girls', id: 'a', ext: 'png' }),
+    'previews/lily_4_en_the-ribbon-of-light-personalized-gymnast_a.png'
+  );
 });
 
 test('falls back to the product handle when the book has no title', () => {
