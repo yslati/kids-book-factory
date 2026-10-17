@@ -1,6 +1,6 @@
 # kids-book-factory - cover-preview backend
 
-Vercel backend for the kids-book Shopify theme. Puts a child's face on a book's cover (via fal.ai) so the storefront can show a preview before checkout. This is the **preview slice** only - post-purchase print/PDF/Gelato is out of scope.
+Vercel backend for the kids-book Shopify theme. Puts a child's face on a book's cover (via Higgsfield's image API) so the storefront can show a preview before checkout. This is the **preview slice** only - post-purchase print/PDF/Gelato is out of scope.
 
 ## Flow
 
@@ -8,21 +8,36 @@ Vercel backend for the kids-book Shopify theme. Puts a child's face on a book's 
 Browser            this backend                      external
 POST /api/upload-url  → Turnstile + rate-limit → presign R2 PUT → { presigned_put_url, photo_key, generation_id }
 PUT photo             → Cloudflare R2
-POST /api/preview     → resolve cover+prompt by theme_id (Shopify) → fal Nano Banana 2 edit (or Higgsfield) → store cover in R2
+POST /api/preview     → resolve cover+prompt by theme_id (Shopify) → Higgsfield model chain (lib/generate.js) → store cover in R2
                       → { preview_url, generation_id, status: 'ready', remaining }
 ```
 
-- **fal model:** `fal-ai/nano-banana-2/edit` (Google Gemini 3.1 Flash Image) - multi-image (`[cover, child]`) so it can redraw the existing cover's character as the child. Flat $0.08/image at the `1K` resolution we request.
-- **Higgsfield fallback:** `marketing-studio/image` (Marketing Studio Image 2.0, `quality: low`) on the Higgsfield API, same `[cover, child]` input. Billed by tokens: ~$0.061/image at `1k` with the default ~3,700-character prompt (check longer per-book prompts with Higgsfield's free `POST /estimate/marketing-studio/image`). Prompts are capped at 5,000 characters. Higgsfield has no Nano Banana, so the fallback cover can look a little different. `lib/generate.js` routes:
-  - fal balance **at or below $0.10** → Higgsfield first, fal as its backup. Needs `FAL_BILLING_KEY`; the balance is re-read at most once a minute.
-  - otherwise fal first; if it fails, or is still running after 30s, Higgsfield gets the rest of the time budget.
-  - only one provider configured → one attempt + one retry on it, as before.
-  - Logs say which provider made each cover: `[generate] cover by fal (fal balance $12.34)`.
+- **Image generation:** an ordered chain of Higgsfield models with fallbacks - see [Image generation](#image-generation) below.
 - **Object names:** R2 keys are readable. The photo is `photos/<name>_<age>_<language>_<id>.<ext>` and the cover is `previews/<name>_<age>_<language>_<book>_<id>.<ext>`, e.g. `photos/emma_5_en_k3x9p2m7q1.jpg` and `previews/emma_5_en_the-winning-goal_k3x9p2m7q1.jpg`. `<book>` is the product title before its ": Personalized…" or " – Personalized…" suffix. `<id>` is the `generation_id`: 10 random characters shared by the photo and its cover. It stays random because the bucket is public, and those characters are what keep a photo URL unguessable. Names are slugged to plain ASCII. A missing age or language becomes `na`, and a name with no Latin letters becomes `child`. See `lib/object-names.js`.
 - **Anti-tamper:** the browser never sends the prompt or cover; the backend reads them from the product's metafields by `theme_id`. New product → no backend change.
 - **Book languages:** `en`, `es`, `fr`, `de`, `it`, and `pt`. The preview API rejects other values and asks the image model to translate visible cover text into the selected language.
 - **Synchronous**, `maxDuration` 60s; generation must finish within 50s of the request. Generated cover persisted to R2 (provider URLs are temporary).
 - Missing env vars degrade to `503 *-not-configured`; Turnstile + rate-limiting no-op until configured.
+
+## Image generation
+
+`lib/generate.js` holds one ordered `CHAIN` of attempts. Each runs only when the one before it failed (an error, a safety block, no credit) or ran out of time:
+
+| # | Provider | Endpoint | Quality | Typical time | Price per cover |
+| --- | --- | --- | --- | --- | --- |
+| 1 (main) | Higgsfield | `marketing-studio/image/flare` (Marketing Studio 2.5 Flare) | `medium` | 17–25s | ≈ $0.02–0.04 |
+| 2 | Higgsfield | `marketing-studio/image/flare` | `low` | 15–24s | ≈ $0.01–0.03 |
+| 3 | Higgsfield | `marketing-studio/image` (Marketing Studio 2.0) | `low` | 17–19s | $0.057 |
+
+- All three take the same `[cover, child]` pair at `1k`, at the supported aspect ratio nearest the cover's (`lib/higgsfield.js`). Higgsfield's prompt enhancement stays off, so the name and language rules reach the model unchanged.
+- Prices: Flare is billed by tokens and Higgsfield reports no per-request cost, so its figures are estimates from the published rates; they rise a little with prompt length. 2.0's is Higgsfield's exact quote for the default prompt. `POST https://api.higgsfield.ai/estimate/<endpoint>` returns a free quote for any request body.
+- Time: generation must finish within 50s of the request. Every attempt but the last is capped at 28s, and none starts with less than 15s left. A job cut off after Higgsfield started it may still be billed.
+- Higgsfield is the only provider, so an empty Higgsfield balance (submit returns `403`) means no previews. Keep it topped up.
+- Covers come back as PNG (~1.7–2 MB) and are stored as-is.
+- Logs name the attempt behind each cover, e.g. `[generate] cover by higgsfield marketing-studio/image/flare medium`; each failed attempt logs a `[generate] … failed:` warning first.
+- **fal is off.** `lib/fal.js` (Nano Banana 2, $0.08 per cover) and the balance check in `lib/fal-balance.js` stay in the code. To use fal again as the last fallback, uncomment its entry at the end of `CHAIN` and set `FAL_KEY`; with `FAL_BILLING_KEY` set too, fal is skipped once its balance is $0.10 or less.
+- **Prompt:** `lib/prompt.js`. The default asks for about 75% the real child and 25% the cover's animation style, painted with the cover's own rendering so the face never looks pasted in. Each order appends the book language, the child's name (the whole placeholder name is replaced, with no leftover letters) and the age. A product's `book.cover_preview_prompt` metafield overrides the default; keep it short enough that the full prompt stays under Higgsfield's 5,000-character limit (`test/prompt.test.js` checks the default with the longest name and language).
+- **Why these models:** a side-by-side study of 20+ models on real covers and child photos (October 2026), with prices, timings and every generated image. It includes children's photos, so it is kept outside this public repo, in `model-study/` next to it on the maintainer's machine (`cover-model-study.html`).
 
 ## Preview limits & customer sign-in
 
@@ -67,7 +82,7 @@ npx vercel dev         # local, http://localhost:3000
 npx vercel deploy --prod
 ```
 
-Env (see `.env.example`): `FAL_KEY` (+ optional `FAL_BILLING_KEY`, `HIGGSFIELD_KEY` for the fallback), `R2_*` (+ public bucket URL), `SHOPIFY_SHOP` + `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET` (scopes `read_products`, `write_customers`), `TURNSTILE_SECRET`, `UPSTASH_*`, `PREVIEW_TOKEN_SECRET`, `ALLOWED_ORIGIN`. The backend obtains and refreshes Shopify's short-lived Admin API token automatically. Add the same values in the Vercel project, then put the deployed URL in the theme section's **Backend URL** setting.
+Env (see `.env.example`): `HIGGSFIELD_KEY` (the fal keys are commented out while fal is off), `R2_*` (+ public bucket URL), `SHOPIFY_SHOP` + `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET` (scopes `read_products`, `write_customers`), `TURNSTILE_SECRET`, `UPSTASH_*`, `PREVIEW_TOKEN_SECRET`, `ALLOWED_ORIGIN`. The backend obtains and refreshes Shopify's short-lived Admin API token automatically. Add the same values in the Vercel project, then put the deployed URL in the theme section's **Backend URL** setting.
 
 Smoke test:
 ```bash
@@ -80,4 +95,4 @@ Shopify-side setup (page handle `create-your-book`, Cover variants, `book.*` met
 
 ## Cost
 
-Vercel/R2/Upstash/Turnstile free tiers + $0.08 per preview to fal.ai (Nano Banana 2, `1K`), or ~$0.06 when Higgsfield makes it. The tiered limits above cap the worst case at 8 previews/day per IP, i.e. ~$0.64. A fal attempt that times out can still be billed even when Higgsfield then makes the cover.
+Vercel/R2/Upstash/Turnstile free tiers + Higgsfield: about $0.02–0.04 per preview when the main model answers, up to ~$0.13 when all three attempts run and are billed. The tiered limits above cap the worst case at 8 previews/day per IP, i.e. ~$0.25 normally and ~$1 at most.

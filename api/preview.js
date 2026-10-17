@@ -9,8 +9,8 @@
 // Flow:
 //   1. Verify origin + Turnstile + rate limit (per-customer tier when signed in).
 //   2. Resolve cover + prompt SERVER-SIDE from Shopify by theme_id (anti-tamper).
-//   3. Generate ([cover, child] + prompt) via lib/generate.js: fal Nano Banana 2,
-//      or Higgsfield when fal's balance is <= $0.10 or fal fails.
+//   3. Generate ([cover, child] + prompt) via lib/generate.js, which tries an
+//      ordered chain of models until one returns a cover.
 //   4. Persist the generated cover to R2 (provider URLs are temporary), named
 //      previews/<name>_<age>_<language>_<book>_<id>.<ext> (lib/object-names.js).
 //   5. Return the permanent R2 url.
@@ -21,6 +21,7 @@ import { checkRateLimit, clientIp } from '../lib/ratelimit.js';
 import { publicUrl, putObject, r2Configured } from '../lib/r2.js';
 import { resolveBook, shopifyConfigured } from '../lib/shopify.js';
 import { generateCover, generationConfigured } from '../lib/generate.js';
+import { buildPreviewPrompt } from '../lib/prompt.js';
 import { resolveBookLanguage } from '../lib/book-languages.js';
 import { verifyCustomerToken } from '../lib/customer-token.js';
 import { tagCustomerPreviewLimit } from '../lib/customer-tag.js';
@@ -112,26 +113,11 @@ export default async function handler(req, res) {
   try {
     // 2. Resolve cover + prompt from the product's own metafields.
     const book = await resolveBook(themeId);
-    let prompt = book.prompt;
-    prompt += '\n\nBook language: ' + language.name + ' (' + language.code + '). ' +
-      'Translate all visible cover text into this language while preserving the ' +
-      'existing typography, layout, colours, and the child\'s name.';
-    if (childName) {
-      prompt += '\n\nPersonalise the cover: the child\'s first name is "' + childName +
-        '". If the title shows a character or placeholder name, change it to read "' + childName +
-        '" in the same font, size, colour, and position. Apart from the requested ' +
-        'language translation, do not change any other words or letters.';
-    }
-    if (ageText) {
-      prompt += '\n\nThe child is ' + ageText + ' years old. Use this only to set the '
-        + 'character\'s body proportions and height; the face must still come from the '
-        + 'photo, not from a generic child of that age.';
-    }
+    const prompt = buildPreviewPrompt(book.prompt, { language, childName, age: ageText });
 
     const childUrl = publicUrl(photoKey);
 
-    // 3. Generate. lib/generate.js picks the provider and falls back (or
-    //    retries) on failure.
+    // 3. Generate, falling back down the model chain on failure.
     const generated = await generateCover(book.coverUrl, childUrl, prompt, {
       coverAspect: book.coverAspect,
       deadline: startedAt + GENERATION_BUDGET_MS
