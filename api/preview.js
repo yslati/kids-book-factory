@@ -11,7 +11,8 @@
 //   2. Resolve cover + prompt SERVER-SIDE from Shopify by theme_id (anti-tamper).
 //   3. Generate ([cover, child] + prompt) via lib/generate.js, which tries an
 //      ordered chain of models until one returns a cover.
-//   4. Persist the generated cover to R2 (provider URLs are temporary), named
+//   4. Re-encode the cover as a JPEG (lib/cover-image.js) and persist it to R2
+//      (provider URLs are temporary), named
 //      previews/<name>_<age>_<language>_<book>_<id>.<ext> (lib/object-names.js).
 //   5. Return the permanent R2 url.
 
@@ -27,6 +28,7 @@ import { verifyCustomerToken } from '../lib/customer-token.js';
 import { tagCustomerPreviewLimit } from '../lib/customer-tag.js';
 import { savePreviews } from '../lib/user-previews.js';
 import { previewKey } from '../lib/object-names.js';
+import { coverForStorage } from '../lib/cover-image.js';
 
 // vercel.json gives this function 60s. Generation must finish within 50s of
 // the request arriving, leaving time to copy the cover to R2 and respond.
@@ -129,9 +131,10 @@ export default async function handler(req, res) {
     try {
       const imgRes = await fetch(generatedUrl);
       if (imgRes.ok) {
-        const buf = Buffer.from(await imgRes.arrayBuffer());
-        const ct = imgRes.headers.get('content-type') || 'image/jpeg';
-        const ext = ct.indexOf('png') !== -1 ? 'png' : 'jpg';
+        const cover = await coverForStorage(
+          Buffer.from(await imgRes.arrayBuffer()),
+          imgRes.headers.get('content-type')
+        );
         const key = previewKey({
           childName: childName,
           age: ageText,
@@ -139,9 +142,9 @@ export default async function handler(req, res) {
           bookTitle: book.title,
           themeId: themeId,
           id: generationId,
-          ext: ext
+          ext: cover.ext
         });
-        previewUrl = await putObject(key, buf, ct);
+        previewUrl = await putObject(key, cover.body, cover.contentType);
       }
     } catch (storeErr) {
       // If persistence fails, fall back to the (temporary) provider URL so the
