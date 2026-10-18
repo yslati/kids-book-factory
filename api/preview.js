@@ -1,13 +1,14 @@
 // POST /api/preview  (synchronous, resilient)
 // Generates the personalised cover and returns its permanent URL.
 //
-// Body: { theme_id, photo_key, generation_id, child_name, age, language, turnstile_token,
+// Body: { theme_id, photo_key, generation_id, child_name, age, language, turnstile_token?,
 //         customer_id?, token_date?, customer_token? }
 // → { preview_url, generation_id, status: 'ready', remaining }
 // 429 → { error: 'rate-limited', login_required, remaining: 0 }
 //
 // Flow:
-//   1. Verify origin + Turnstile + rate limit (per-customer tier when signed in).
+//   1. Verify origin + the one-time preview pass from /upload-url (else a
+//      Turnstile token) + rate limit (per-customer tier when signed in).
 //   2. Resolve cover + prompt SERVER-SIDE from Shopify by theme_id (anti-tamper).
 //   3. Generate ([cover, child] + prompt) via lib/generate.js, which tries an
 //      ordered chain of models until one returns a cover.
@@ -18,6 +19,8 @@
 
 import { applyCors, isOriginAllowed } from '../lib/cors.js';
 import { verifyTurnstile } from '../lib/turnstile.js';
+import { redeemPreviewPass } from '../lib/preview-pass.js';
+import { getRedis } from '../lib/redis.js';
 import { checkRateLimit, clientIp } from '../lib/ratelimit.js';
 import { publicUrl, putObject, r2Configured } from '../lib/r2.js';
 import { resolveBook, shopifyConfigured } from '../lib/shopify.js';
@@ -45,7 +48,10 @@ export default async function handler(req, res) {
   const startedAt = Date.now();
   if (applyCors(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'method-not-allowed' });
-  if (!isOriginAllowed(req)) return res.status(403).json({ error: 'forbidden-origin' });
+  if (!isOriginAllowed(req)) {
+    console.warn('[preview] 403 forbidden-origin:', req.headers.origin || '(none)');
+    return res.status(403).json({ error: 'forbidden-origin' });
+  }
 
   if (!r2Configured()) return res.status(503).json({ error: 'storage-not-configured' });
   if (!shopifyConfigured()) return res.status(503).json({ error: 'shopify-not-configured' });
@@ -80,8 +86,15 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'bad-generation-id' });
   }
 
-  const ok = await verifyTurnstile(body.turnstile_token, clientIp(req));
-  if (!ok) return res.status(403).json({ error: 'challenge-failed' });
+  // /upload-url verified Turnstile for this generation and granted a one-time
+  // pass. Without one (Redis unavailable, or the pass expired or was already
+  // used) the request must carry a fresh token.
+  const verified = (await redeemPreviewPass(getRedis(), generationId))
+    || (await verifyTurnstile(body.turnstile_token, clientIp(req)));
+  if (!verified) {
+    console.warn('[preview] 403 challenge-failed:', body.turnstile_token ? 'token rejected' : 'no pass or token');
+    return res.status(403).json({ error: 'challenge-failed' });
+  }
 
   // Tier selection: a valid signed token buys the higher per-customer
   // allowance; everyone else gets the anonymous per-IP allowance and is

@@ -6,15 +6,16 @@ Vercel backend for the kids-book Shopify theme. Puts a child's face on a book's 
 
 ```
 Browser            this backend                      external
-POST /api/upload-url  → Turnstile + rate-limit → presign R2 PUT → { presigned_put_url, photo_key, generation_id }
+POST /api/upload-url  → Turnstile + rate-limit → presign R2 PUT + grant preview pass → { presigned_put_url, photo_key, generation_id, preview_pass }
 PUT photo             → Cloudflare R2
-POST /api/preview     → resolve cover+prompt by theme_id (Shopify) → Higgsfield model chain (lib/generate.js) → store cover in R2
+POST /api/preview     → redeem preview pass (else Turnstile) + rate-limit → resolve cover+prompt by theme_id (Shopify) → Higgsfield model chain (lib/generate.js) → store cover in R2
                       → { preview_url, generation_id, status: 'ready', remaining }
 ```
 
 - **Image generation:** an ordered chain of Higgsfield models with fallbacks - see [Image generation](#image-generation) below.
 - **Object names:** R2 keys are readable. The photo is `photos/<name>_<age>_<language>_<id>.<ext>` and the cover is `previews/<name>_<age>_<language>_<book>_<id>.<ext>`, e.g. `photos/emma_5_en_k3x9p2m7q1.jpg` and `previews/emma_5_en_the-winning-goal_k3x9p2m7q1.jpg`. `<book>` is the product title before its ": Personalized…" or " – Personalized…" suffix. `<id>` is the `generation_id`: 10 random characters shared by the photo and its cover. It stays random because the bucket is public, and those characters are what keep a photo URL unguessable. Names are slugged to plain ASCII. A missing age or language becomes `na`, and a name with no Latin letters becomes `child`. See `lib/object-names.js`.
 - **Anti-tamper:** the browser never sends the prompt or cover; the backend reads them from the product's metafields by `theme_id`. New product → no backend change.
+- **One challenge per preview:** Turnstile tokens are single-use, so once `/upload-url` has verified the visitor's token it grants a one-time pass for the `generation_id` it issues (Upstash, 15 min, `lib/preview-pass.js`; not the `photo_key`, which carries the child's name). `/preview` redeems it with `GETDEL` instead of needing a second token mid-generation, so one solve still buys exactly one preview. When no pass can be stored (`UPSTASH_*` unset, a Redis error), `/upload-url` returns `preview_pass: false` and the theme sends a fresh `turnstile_token` with `/preview`, verified as usual.
 - **Book languages:** `en`, `es`, `fr`, `de`, `it`, and `pt`. The preview API rejects other values and asks the image model to translate visible cover text into the selected language.
 - **Synchronous**, `maxDuration` 60s; generation must finish within 50s of the request. Generated cover persisted to R2 (provider URLs are temporary).
 - Missing env vars degrade to `503 *-not-configured`; Turnstile + rate-limiting no-op until configured.

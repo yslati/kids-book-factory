@@ -5,13 +5,17 @@
 //
 // Body: { filename, content_type, size, theme_id, child_name, age, language,
 //         turnstile_token, customer_id?, token_date?, customer_token? }
-// → { presigned_put_url, photo_key, generation_id }
+// → { presigned_put_url, photo_key, generation_id, preview_pass }
 // photo_key is named after the child: photos/<name>_<age>_<language>_<id>.<ext>
 // (see lib/object-names.js).
+// preview_pass is true when /preview can skip its own Turnstile check for this
+// generation (lib/preview-pass.js); false means /preview needs a fresh token.
 // 429 → { error: 'rate-limited', login_required, remaining: 0 }
 
 import { applyCors, isOriginAllowed } from '../lib/cors.js';
 import { verifyTurnstile } from '../lib/turnstile.js';
+import { grantPreviewPass } from '../lib/preview-pass.js';
+import { getRedis } from '../lib/redis.js';
 import { checkRateLimit, clientIp } from '../lib/ratelimit.js';
 import { presignPut, r2Configured } from '../lib/r2.js';
 import { verifyCustomerToken } from '../lib/customer-token.js';
@@ -23,7 +27,10 @@ const ALLOWED_TYPES = ['image/jpeg', 'image/png'];
 export default async function handler(req, res) {
   if (applyCors(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'method-not-allowed' });
-  if (!isOriginAllowed(req)) return res.status(403).json({ error: 'forbidden-origin' });
+  if (!isOriginAllowed(req)) {
+    console.warn('[upload-url] 403 forbidden-origin:', req.headers.origin || '(none)');
+    return res.status(403).json({ error: 'forbidden-origin' });
+  }
 
   if (!r2Configured()) return res.status(503).json({ error: 'storage-not-configured' });
 
@@ -34,7 +41,10 @@ export default async function handler(req, res) {
   body = body || {};
 
   const ok = await verifyTurnstile(body.turnstile_token, clientIp(req));
-  if (!ok) return res.status(403).json({ error: 'challenge-failed' });
+  if (!ok) {
+    console.warn('[upload-url] 403 challenge-failed:', body.turnstile_token ? 'token rejected' : 'no token');
+    return res.status(403).json({ error: 'challenge-failed' });
+  }
 
   // Signed-in shoppers get the roomier upload allowance keyed to their account.
   // No IP backstop here - this endpoint only presigns a PUT (no paid work), and
@@ -74,10 +84,12 @@ export default async function handler(req, res) {
 
   try {
     const presignedPutUrl = await presignPut(photoKey, contentType);
+    const previewPass = await grantPreviewPass(getRedis(), generationId);
     return res.status(200).json({
       presigned_put_url: presignedPutUrl,
       photo_key: photoKey,
-      generation_id: generationId
+      generation_id: generationId,
+      preview_pass: previewPass
     });
   } catch (e) {
     return res.status(500).json({ error: 'presign-failed' });
