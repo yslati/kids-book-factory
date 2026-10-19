@@ -6,14 +6,15 @@
 //
 // Body: { level: 'error' | 'warn', code, message?, stack?, page?, context? }
 // sent as text/plain JSON, which a beacon can post with no CORS preflight.
-// → 204. Rejected reports get 400/403/429 and go no further.
+// → 204. Rejected reports get 400/403/429 and go no further, except that a
+// visitor's first 429 in an hour posts one notice to #logs.
 //
 // Not wrapped in withReporting: a rejected report would otherwise post a
 // report of its own.
 
 import { applyCors, isOriginAllowed } from '../lib/cors.js';
 import { checkRateLimit } from '../lib/ratelimit.js';
-import { normaliseClientEvent, reportClientEvent } from '../lib/report.js';
+import { normaliseClientEvent, reportClientEvent, reportClientLimit } from '../lib/report.js';
 
 export default async function handler(req, res) {
   if (applyCors(req, res)) return;
@@ -29,7 +30,10 @@ export default async function handler(req, res) {
   if (!event) return res.status(400).json({ error: 'bad-event' });
 
   const rl = await checkRateLimit(req, 'log');
-  if (!rl.success) return res.status(429).json({ error: 'rate-limited' });
+  if (!rl.success) {
+    reportClientLimit(req);
+    return res.status(429).json({ error: 'rate-limited' });
+  }
 
   reportClientEvent(req, event);
   return res.status(204).end();

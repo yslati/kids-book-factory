@@ -4,7 +4,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { apiEmbed, normaliseClientEvent, reportClientEvent, webEmbed, withReporting } from '../lib/report.js';
+import {
+  apiEmbed, normaliseClientEvent, reportClientEvent, reportClientLimit, webEmbed, withReporting
+} from '../lib/report.js';
 import { resetDiscordThrottle, setDiscordOutbox } from '../lib/discord.js';
 
 function captureDiscord(t) {
@@ -298,6 +300,36 @@ test('a storefront report is posted with the sender\'s details', async (t) => {
   assert.equal(posts[0].author.name, 'Storefront · /pages/create-your-book');
   assert.equal(fieldsOf(posts[0]).Status, '`422`');
   assert.equal(fieldsOf(posts[0]).IP, '`203.0.113.7`');
+});
+
+test('a visitor past the storefront report limit gets one notice an hour', async (t) => {
+  const posts = captureDiscord(t);
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  const visitor = mockReq({ url: '/log', headers: { 'x-forwarded-for': '198.51.100.20' } });
+
+  reportClientLimit(visitor);
+  reportClientLimit(visitor);
+  reportClientLimit(mockReq({ url: '/log', headers: { 'x-forwarded-for': '198.51.100.21' } }));
+  await flush();
+  assert.equal(posts.length, 2, 'one per IP');
+  assert.equal(posts[0].title, '🟠 Storefront reports muted for this visitor');
+  assert.equal(posts[0].color, 0xf0b232);
+  assert.equal(posts[0].author.name, 'Storefront');
+  assert.match(posts[0].description, /more than the hourly limit/);
+  assert.equal(fieldsOf(posts[0]).IP, '`198.51.100.20`');
+  assert.equal(fieldsOf(posts[1]).IP, '`198.51.100.21`');
+
+  t.mock.timers.tick(60 * 60 * 1000 - 1);
+  reportClientLimit(visitor);
+  await flush();
+  assert.equal(posts.length, 2, 'still inside the hour');
+
+  t.mock.timers.tick(1);
+  reportClientLimit(visitor);
+  await flush();
+  assert.equal(posts.length, 3, 'an hour later');
+  assert.equal(fieldsOf(posts[2]).IP, '`198.51.100.20`');
 });
 
 const VISITOR = {
