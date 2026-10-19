@@ -11,8 +11,11 @@
 
 import { applyCors, isOriginAllowed } from '../../lib/cors.js';
 import { publicUrl, r2Configured } from '../../lib/r2.js';
+import { withReporting } from '../../lib/report.js';
 
-export default async function handler(req, res) {
+export default withReporting(handler);
+
+async function handler(req, res) {
   if (applyCors(req, res)) return;
   if (req.method !== 'GET') return res.status(405).json({ error: 'method-not-allowed' });
   if (!isOriginAllowed(req)) return res.status(403).json({ error: 'forbidden-origin' });
@@ -28,7 +31,9 @@ export default async function handler(req, res) {
     try {
       const head = await fetch(candidate, { method: 'HEAD' });
       if (head.ok) return res.status(200).json({ status: 'ready', preview_url: candidate });
-    } catch (e) { /* try next */ }
+    } catch (e) {
+      console.warn('[preview-status] HEAD failed:', (e && e.message) || e);
+    }
   }
 
   return res.status(200).json({ status: 'pending' });

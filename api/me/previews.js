@@ -15,8 +15,11 @@
 import { applyCors, isOriginAllowed } from '../../lib/cors.js';
 import { verifyCustomerToken, customerTokensEnabled } from '../../lib/customer-token.js';
 import { listPreviews, savePreviews, userPreviewsEnabled } from '../../lib/user-previews.js';
+import { withReporting } from '../../lib/report.js';
 
-export default async function handler(req, res) {
+export default withReporting(handler);
+
+async function handler(req, res) {
   if (applyCors(req, res)) return;
   if (!isOriginAllowed(req)) return res.status(403).json({ error: 'forbidden-origin' });
 
