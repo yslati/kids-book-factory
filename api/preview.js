@@ -16,6 +16,8 @@
 //      (provider URLs are temporary), named
 //      previews/<name>_<age>_<language>_<book>_<id>.<ext> (lib/object-names.js).
 //   5. Return the permanent R2 url.
+// The photo, then the cover or the error, also go to Discord's #previews
+// channel (lib/preview-feed.js).
 
 import { applyCors, isOriginAllowed } from '../lib/cors.js';
 import { verifyTurnstile } from '../lib/turnstile.js';
@@ -32,6 +34,8 @@ import { tagCustomerPreviewLimit } from '../lib/customer-tag.js';
 import { savePreviews } from '../lib/user-previews.js';
 import { previewKey } from '../lib/object-names.js';
 import { coverForStorage } from '../lib/cover-image.js';
+import { withReporting } from '../lib/report.js';
+import { announcePreview } from '../lib/preview-feed.js';
 
 // vercel.json gives this function 60s. Generation must finish within 50s of
 // the request arriving, leaving time to copy the cover to R2 and respond.
@@ -44,7 +48,9 @@ function minRemaining(a, b) {
   return Math.min(a, b);
 }
 
-export default async function handler(req, res) {
+export default withReporting(handler);
+
+async function handler(req, res) {
   const startedAt = Date.now();
   if (applyCors(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'method-not-allowed' });
@@ -125,6 +131,17 @@ export default async function handler(req, res) {
     });
   }
 
+  const feed = announcePreview(req, {
+    photoUrl: publicUrl(photoKey),
+    themeId,
+    generationId,
+    childName,
+    age: ageText,
+    language: language.name,
+    customerId: customer.valid ? customer.customerId : null,
+    startedAt
+  });
+
   try {
     // 2. Resolve cover + prompt from the product's own metafields.
     const book = await resolveBook(themeId);
@@ -143,25 +160,25 @@ export default async function handler(req, res) {
     let previewUrl = generatedUrl;
     try {
       const imgRes = await fetch(generatedUrl);
-      if (imgRes.ok) {
-        const cover = await coverForStorage(
-          Buffer.from(await imgRes.arrayBuffer()),
-          imgRes.headers.get('content-type')
-        );
-        const key = previewKey({
-          childName: childName,
-          age: ageText,
-          language: language.code,
-          bookTitle: book.title,
-          themeId: themeId,
-          id: generationId,
-          ext: cover.ext
-        });
-        previewUrl = await putObject(key, cover.body, cover.contentType);
-      }
+      if (!imgRes.ok) throw new Error('cover-fetch-' + imgRes.status);
+      const cover = await coverForStorage(
+        Buffer.from(await imgRes.arrayBuffer()),
+        imgRes.headers.get('content-type')
+      );
+      const key = previewKey({
+        childName: childName,
+        age: ageText,
+        language: language.code,
+        bookTitle: book.title,
+        themeId: themeId,
+        id: generationId,
+        ext: cover.ext
+      });
+      previewUrl = await putObject(key, cover.body, cover.contentType);
     } catch (storeErr) {
       // If persistence fails, fall back to the (temporary) provider URL so the
       // user still sees a preview; the order record should prefer the R2 copy.
+      console.warn('[preview] cover not stored, returning the provider URL:', (storeErr && storeErr.message) || storeErr);
       previewUrl = generatedUrl;
     }
 
@@ -184,6 +201,7 @@ export default async function handler(req, res) {
       } catch (e) { /* never surfaces */ }
     }
 
+    feed.done({ coverUrl: previewUrl, bookTitle: book.title, attempt: generated.attempt, temporary: previewUrl === generatedUrl });
     return res.status(200).json({
       preview_url: previewUrl,
       generation_id: generationId,
@@ -197,6 +215,7 @@ export default async function handler(req, res) {
     // Log the real error to the server (vercel dev terminal) for diagnosis.
     console.error('[preview] failed:', err && err.stack ? err.stack : err);
     const detail = String((err && err.message) || err);
+    feed.done({ error: detail });
     if (code === 'product-not-found' || code === 'prompt-missing' || code === 'cover-missing') {
       return res.status(422).json({ error: code, status: 'failed', detail });
     }

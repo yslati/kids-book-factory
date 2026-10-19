@@ -12,6 +12,9 @@
     },
     "api/me/previews.js": {
       "maxDuration": 15
+    },
+    "api/log.js": {
+      "maxDuration": 30
     }
   },
   "rewrites": [
@@ -30,6 +33,10 @@
     {
       "source": "/me/previews",
       "destination": "/api/me/previews"
+    },
+    {
+      "source": "/log",
+      "destination": "/api/log"
     }
   ]
 }

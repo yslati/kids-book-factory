@@ -67,6 +67,29 @@ If `PREVIEW_TOKEN_SECRET` is unset the feature is simply off: every token is tre
 - `POST /api/upload-url` - validate + presign an R2 PUT.
 - `POST /api/preview` - resolve book → generate → store → return `preview_url`.
 - `GET /api/preview-status/<id>` - resilience fallback (sync path returns `ready` directly).
+- `POST /api/log` - storefront error reports, forwarded to Discord's #logs (see [Discord channels](#discord-channels)).
+
+## Discord channels
+
+The backend posts to Discord channels through their incoming webhooks, one environment variable per channel: `DISCORD_WEBHOOK_<CHANNEL>`. A channel whose variable is unset is off. `lib/discord.js` holds what every channel shares (posting, rate limits, embed pieces, redaction); each channel has a small feed module. Adding a channel takes its variable and a feed that calls `postToDiscord('<channel>', { embeds })`.
+
+| Channel | Variable | Feed | Posts |
+| --- | --- | --- | --- |
+| #logs | `DISCORD_WEBHOOK_LOGS` | `lib/report.js` | API and storefront warnings and errors |
+| #previews | `DISCORD_WEBHOOK_PREVIEWS` | `lib/preview-feed.js` | every preview: the photo, then the cover |
+
+### #logs: error reports
+
+- **API:** every route is wrapped in `withReporting` (`lib/report.js`). A request is reported when it answers `>= 400` or logs a `console.warn`/`console.error` (a fallback model, a cover kept on the provider's URL, a rejected Turnstile token, a Redis error...). It becomes one message: status and error code, the request's log lines with timings, and the book, generation id, language, customer (verified id or anonymous), duration, IP, country/region/city, IP time zone, device, user agent, origin and Vercel request id (searchable in the Vercel logs). Errors (red) are `5xx` and `console.error`; warnings (amber) are the rest. An unhandled crash answers `500 internal-error` in JSON. Posts run after the response through `waitUntil`, so they never slow a request.
+- **Storefront:** `snippets/kb-error-reporter.liquid` in the theme posts uncaught errors from the theme's own scripts (not apps or extensions) and the failures flows report through `window.KBReport` (a failed preview with its step and HTTP status, a rejected photo, Turnstile errors, a failed add to cart...) to `POST /api/log`, which adds the same visitor details. At most 5 reports per page view and 20 per IP per hour.
+- **Privacy:** reports never include the child's name, photo, photo or cover URLs (their keys carry the name), or tokens: only whitelisted request fields are read, and object keys and `?b=`/`?name=`/`*token=` parameters are redacted from logged text. They do include the visitor's IP and approximate location, and Discord keeps messages until deleted.
+- **Limits:** no fixed cap. Posting follows the rate limit Discord reports on every response (5 posts per 1-2 s per webhook when measured in October 2026): when a channel's window is full, a post waits for it to reopen, and a `429` waits out its `retry_after` and retries. Each channel's posts queue in order, so a burst waits its turn instead of colliding. A post is dropped only if its turn doesn't come before the function's deadline (the next post notes how many were; `/api/log` gets 30 s for this), and a webhook that answers 401 or 404 is left alone until the next cold start, as Discord asks. Posts Discord can't take in time (an outage, a burst longer than the function, a deleted webhook) are saved in Upstash (`kbf:discord:outbox:<channel>`, 30 days, at most 10,000) and sent after the channel's next successful post, oldest first, marked "sent late". Storefront pages send 20 reports one by one and count the rest, plus repeats of the same error, into one page summary when the page is hidden; `/api/log` accepts 120 reports per IP per hour. Total volume isn't capped. Discord webhooks are free; each storefront report costs one Upstash command.
+
+### #previews: photo and cover
+
+When `/api/preview` starts generating (after Turnstile and the rate limits), it posts the child's photo with the book (linked to its product page), language, customer and country. When it finishes, a follow-up carries the cover (with the time, model and its direct R2 link, or a warning and the provider's temporary link when the copy to R2 failed) or the error. Discord webhooks can't send real replies, so the follow-up's title links back to the photo message and repeats the photo as a thumbnail, which keeps each pair readable when previews overlap. The follow-up goes out after the response, through `waitUntil`.
+
+This channel shows the child's photo, name and age by design. Images are linked from R2, not uploaded to Discord, so Discord only caches them and they stop showing once the bucket deletes them. Keep the channel private to the people who review covers.
 
 ## Tests
 
@@ -83,7 +106,7 @@ npx vercel dev         # local, http://localhost:3000
 npx vercel deploy --prod
 ```
 
-Env (see `.env.example`): `HIGGSFIELD_KEY` (the fal keys are commented out while fal is off), `R2_*` (+ public bucket URL), `SHOPIFY_SHOP` + `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET` (scopes `read_products`, `write_customers`), `TURNSTILE_SECRET`, `UPSTASH_*`, `PREVIEW_TOKEN_SECRET`, `ALLOWED_ORIGIN`. The backend obtains and refreshes Shopify's short-lived Admin API token automatically. Add the same values in the Vercel project, then put the deployed URL in the theme section's **Backend URL** setting.
+Env (see `.env.example`): `HIGGSFIELD_KEY` (the fal keys are commented out while fal is off), `R2_*` (+ public bucket URL), `SHOPIFY_SHOP` + `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET` (scopes `read_products`, `write_customers`), `TURNSTILE_SECRET`, `UPSTASH_*`, `PREVIEW_TOKEN_SECRET`, `ALLOWED_ORIGIN`, `DISCORD_WEBHOOK_*`. The backend obtains and refreshes Shopify's short-lived Admin API token automatically. Add the same values in the Vercel project, then put the deployed URL in the theme section's **Backend URL** setting.
 
 Smoke test:
 ```bash

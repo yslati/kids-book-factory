@@ -20,11 +20,14 @@ import { checkRateLimit, clientIp } from '../lib/ratelimit.js';
 import { presignPut, r2Configured } from '../lib/r2.js';
 import { verifyCustomerToken } from '../lib/customer-token.js';
 import { newGenerationId, photoKey as photoKeyFor } from '../lib/object-names.js';
+import { withReporting } from '../lib/report.js';
 
 const MAX_MB = parseInt(process.env.MAX_UPLOAD_MB || '10', 10);
 const ALLOWED_TYPES = ['image/jpeg', 'image/png'];
 
-export default async function handler(req, res) {
+export default withReporting(handler);
+
+async function handler(req, res) {
   if (applyCors(req, res)) return;
   if (req.method !== 'POST') return res.status(405).json({ error: 'method-not-allowed' });
   if (!isOriginAllowed(req)) {
@@ -92,6 +95,7 @@ export default async function handler(req, res) {
       preview_pass: previewPass
     });
   } catch (e) {
+    console.error('[upload-url] presign failed:', (e && e.message) || e);
     return res.status(500).json({ error: 'presign-failed' });
   }
 }
