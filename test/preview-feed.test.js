@@ -167,7 +167,7 @@ test('names with markdown or mentions are shown as plain text', async (t) => {
   const calls = stubDiscord(t);
   await announcePreview(req, preview({ childName: '**Emma** @everyone [x](https://evil.example)' })).done({ coverUrl: COVER });
   const [photo] = posts(calls);
-  assert.equal(photo.title, '📸 Emma everyone xhttps://evil.example, 5 · the-winning-goal');
+  assert.equal(photo.title, '📸 Emma everyone x(https://evil.example), 5 · the-winning-goal');
   assert.deepEqual(calls[0].body.allowed_mentions, { parse: [] });
 });
 

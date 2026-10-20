@@ -121,7 +121,8 @@ test('code spans and titles neutralise markdown and mentions', () => {
   assert.equal(code('a`b'), '`aˋb`');
   assert.equal(code('[click](https://evil.example) @everyone'), '`[click](https://evil.example) @everyone`');
   assert.equal(code(''), '—');
-  assert.equal(plain('**Emma** [x](https://evil.example) @everyone'), 'Emma xhttps://evil.example everyone');
+  assert.equal(plain('**Emma** [x](https://evil.example) @everyone'), 'Emma x(https://evil.example) everyone');
+  assert.equal(plain('The Winning Goal (Hardcover)'), 'The Winning Goal (Hardcover)');
 });
 
 test('visitor place: flag, country, region, city and time zone', () => {
