@@ -89,6 +89,8 @@ The backend posts to Discord channels through their incoming webhooks, one envir
 
 When `/api/preview` starts generating (after Turnstile and the rate limits), it posts the child's photo with the book (linked to its product page), language, customer and country. When it finishes, a follow-up carries the cover (with the time, model and its direct R2 link, or a warning and the provider's temporary link when the copy to R2 failed) or the error. Discord webhooks can't send real replies, so the follow-up's title links back to the photo message and repeats the photo as a thumbnail, which keeps each pair readable when previews overlap. The follow-up goes out after the response, through `waitUntil`.
 
+Each card also shows a **Count** field ("2nd upload from this IP", "3rd preview from this customer") from `lib/visitor-counts.js`: a signed-in customer counts by account, everyone else by IP, so people sharing a network count together. Uploads are counted when `/upload-url` issues the upload link, previews when generation starts (failed ones included). Each count is a Redis `INCR` on `kbf:count:<upload|preview>:<customer:id|ip:address>` that expires 30 days after its last increment; 2 commands per upload, 3 per preview.
+
 This channel shows the child's photo, name and age by design. Images are linked from R2, not uploaded to Discord, so Discord only caches them and they stop showing once the bucket deletes them. Keep the channel private to the people who review covers.
 
 ## Tests

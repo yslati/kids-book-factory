@@ -21,6 +21,8 @@ import { presignPut, r2Configured } from '../lib/r2.js';
 import { verifyCustomerToken } from '../lib/customer-token.js';
 import { newGenerationId, photoKey as photoKeyFor } from '../lib/object-names.js';
 import { withReporting } from '../lib/report.js';
+import { countUpload } from '../lib/visitor-counts.js';
+import { waitUntil } from '@vercel/functions';
 
 const MAX_MB = parseInt(process.env.MAX_UPLOAD_MB || '10', 10);
 const ALLOWED_TYPES = ['image/jpeg', 'image/png'];
@@ -88,6 +90,8 @@ async function handler(req, res) {
   try {
     const presignedPutUrl = await presignPut(photoKey, contentType);
     const previewPass = await grantPreviewPass(getRedis(), generationId);
+    // For the #previews cards' "2nd upload" count; never delays the response.
+    waitUntil(countUpload(getRedis(), req, customer.valid ? customer.customerId : null));
     return res.status(200).json({
       presigned_put_url: presignedPutUrl,
       photo_key: photoKey,

@@ -36,6 +36,8 @@ import { previewKey } from '../lib/object-names.js';
 import { coverForStorage } from '../lib/cover-image.js';
 import { withReporting } from '../lib/report.js';
 import { announcePreview } from '../lib/preview-feed.js';
+import { countPreview } from '../lib/visitor-counts.js';
+import { waitUntil } from '@vercel/functions';
 
 // vercel.json gives this function 60s. Generation must finish within 50s of
 // the request arriving, leaving time to copy the cover to R2 and respond.
@@ -131,6 +133,10 @@ async function handler(req, res) {
     });
   }
 
+  // Counted as generation starts, whether or not it succeeds.
+  const counts = countPreview(getRedis(), req, customer.valid ? customer.customerId : null);
+  waitUntil(counts);
+
   const feed = announcePreview(req, {
     photoUrl: publicUrl(photoKey),
     themeId,
@@ -139,7 +145,8 @@ async function handler(req, res) {
     age: ageText,
     language: language.name,
     customerId: customer.valid ? customer.customerId : null,
-    startedAt
+    startedAt,
+    counts
   });
 
   try {
