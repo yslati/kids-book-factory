@@ -37,6 +37,7 @@ import { coverForStorage } from '../lib/cover-image.js';
 import { withReporting } from '../lib/report.js';
 import { announcePreview } from '../lib/preview-feed.js';
 import { countPreview } from '../lib/visitor-counts.js';
+import { countEvent } from '../lib/event-stats.js';
 import { waitUntil } from '@vercel/functions';
 
 // vercel.json gives this function 60s. Generation must finish within 50s of
@@ -136,6 +137,8 @@ async function handler(req, res) {
   // Counted as generation starts, whether or not it succeeds.
   const counts = countPreview(getRedis(), req, customer.valid ? customer.customerId : null);
   waitUntil(counts);
+  // The daily summary's preview funnel (lib/event-stats.js).
+  waitUntil(countEvent(getRedis(), 'preview_started'));
 
   const feed = announcePreview(req, {
     photoUrl: publicUrl(photoKey),
@@ -209,6 +212,7 @@ async function handler(req, res) {
     }
 
     feed.done({ coverUrl: previewUrl, bookTitle: book.title, attempt: generated.attempt, temporary: previewUrl === generatedUrl });
+    waitUntil(countEvent(getRedis(), 'preview_ready'));
     return res.status(200).json({
       preview_url: previewUrl,
       generation_id: generationId,
@@ -223,6 +227,7 @@ async function handler(req, res) {
     console.error('[preview] failed:', err && err.stack ? err.stack : err);
     const detail = String((err && err.message) || err);
     feed.done({ error: detail });
+    waitUntil(countEvent(getRedis(), 'preview_failed'));
     if (code === 'product-not-found' || code === 'prompt-missing' || code === 'cover-missing') {
       return res.status(422).json({ error: code, status: 'failed', detail });
     }

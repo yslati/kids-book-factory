@@ -68,6 +68,8 @@ If `PREVIEW_TOKEN_SECRET` is unset the feature is simply off: every token is tre
 - `POST /api/preview` - resolve book → generate → store → return `preview_url`.
 - `GET /api/preview-status/<id>` - resilience fallback (sync path returns `ready` directly).
 - `POST /api/log` - storefront error reports, forwarded to Discord's #logs (see [Discord channels](#discord-channels)).
+- `POST /api/events` - storefront analytics from the Shopify custom pixel, for #events.
+- `GET /api/cron/daily-summary` - Vercel cron, posts yesterday's totals to #events.
 
 ## Discord channels
 
@@ -77,6 +79,7 @@ The backend posts to Discord channels through their incoming webhooks, one envir
 | --- | --- | --- | --- |
 | #logs | `DISCORD_WEBHOOK_LOGS` | `lib/report.js` | API and storefront warnings and errors |
 | #previews | `DISCORD_WEBHOOK_PREVIEWS` | `lib/preview-feed.js` | every preview: the photo, then the cover |
+| #events | `DISCORD_WEBHOOK_EVENTS` | `lib/event-feed.js` | visits, add-to-carts, checkouts and orders live, plus a daily summary |
 
 ### #logs: error reports
 
@@ -92,6 +95,18 @@ When `/api/preview` starts generating (after Turnstile and the rate limits), it 
 Each card also shows a **Count** field ("2nd upload from this IP", "3rd preview from this customer") from `lib/visitor-counts.js`: a signed-in customer counts by account, everyone else by IP, so people sharing a network count together. Uploads are counted when `/upload-url` issues the upload link, previews when generation starts (failed ones included). Each count is a Redis `INCR` on `kbf:count:<upload|preview>:<customer:id|ip:address>` that expires 30 days after its last increment; 2 commands per upload, 3 per preview.
 
 This channel shows the child's photo, name and age by design. Images are linked from R2, not uploaded to Discord, so Discord only caches them and they stop showing once the bucket deletes them. Keep the channel private to the people who review covers.
+
+### #events: visitors, funnel and orders
+
+A Shopify **custom pixel** (`pixel/custom-pixel.js`) sends the storefront's events to `POST /api/events`. Install it in Shopify admin → Settings → Customer events → Add custom pixel: paste the file, set Customer privacy → Permission to "Not required", save and connect. It reports page, product and collection views, searches, cart views, add-to-carts, checkout starts and orders, including the checkout pages the theme's own scripts can't see.
+
+- **Live in #events:** each new visit (its source, landing page, the browser's visit count, location and device), each add-to-cart, each checkout start and each order (total, items, discount codes, first or returning customer, and the source of the visitor's first visit).
+- **Counted only:** page, product and collection views, cart views and searches, plus previews (counted by `/api/preview`).
+- **Daily summary:** a Vercel cron (`api/cron/daily-summary.js`, once a day between 06:00 and 06:59 UTC) posts the previous UTC day: visitors, visits, page views, the funnel from product views through previews, carts and checkouts to orders and revenue, conversion rates, and the top sources, pages and countries. Vercel authenticates it with `CRON_SECRET`; with that header, `?day=YYYY-MM-DD` posts any day.
+- **Visits and sources:** a visit starts after 30 minutes without a page view. Its source is the landing page's UTM tags, else an ad click id (`gclid`, `fbclid`, `ttclid`...), else the referring site, else direct (`lib/traffic-source.js`). The first source a visitor arrives with is kept for 30 days, so later orders are attributed to it.
+- **Storage:** per UTC day in Upstash (`kbf:ev:<day>:*`, kept 40 days; unique visitors by Shopify client id), costing about 5 commands per page view and 10 per new visit, and one function invocation per event.
+- **Privacy:** only paths (query strings and checkout tokens removed), campaign tags, product titles, prices and quantities are stored or posted: never customer details or line item properties, which carry the child's name. Every visitor is tracked without asking for consent, which EU privacy law (GDPR, ePrivacy) generally requires for analytics.
+- **Trust:** the pixel's requests can't be authenticated, so anyone could post fake events. Payloads are validated and each IP is capped at 300 events per 10 minutes per instance; Shopify's orders are the source of truth for revenue.
 
 ## Tests
 

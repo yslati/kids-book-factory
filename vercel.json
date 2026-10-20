@@ -15,6 +15,12 @@
     },
     "api/log.js": {
       "maxDuration": 30
+    },
+    "api/events.js": {
+      "maxDuration": 30
+    },
+    "api/cron/daily-summary.js": {
+      "maxDuration": 30
     }
   },
   "rewrites": [
@@ -37,6 +43,16 @@
     {
       "source": "/log",
       "destination": "/api/log"
+    },
+    {
+      "source": "/events",
+      "destination": "/api/events"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/daily-summary",
+      "schedule": "0 6 * * *"
     }
   ]
 }
