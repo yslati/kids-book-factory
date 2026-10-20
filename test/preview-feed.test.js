@@ -188,3 +188,40 @@ test('the book link only uses a clean origin and handle', async (t) => {
   assert.equal(fieldsOf(noOrigin).Book, '`the-winning-goal`');
   assert.equal(fieldsOf(hostile).Book, '`x)[evil](https://evil.example`');
 });
+
+const countOf = (embed) => (embed.fields.find((f) => f.name === 'Count') || {}).value;
+
+test('cards show the visitor\'s count as its own field', async (t) => {
+  withWebhook(t, WEBHOOK);
+  const calls = stubDiscord(t);
+  await announcePreview(req, preview({ counts: Promise.resolve({ upload: 2, preview: 2, by: 'ip' }) })).done({ coverUrl: COVER });
+  await announcePreview(req, preview({ customerId: '7212345678', counts: { upload: 1, preview: 3, by: 'customer' } })).done({ error: 'higgsfield-timeout' });
+
+  const [photo, cover, photo2, failed] = posts(calls);
+  assert.equal(countOf(photo), '2nd upload from this IP');
+  assert.equal(photo.fields[0].name, 'Count', 'shown first');
+  assert.equal(countOf(cover), '2nd preview from this IP');
+  assert.equal(countOf(photo2), '1st upload from this customer');
+  assert.equal(countOf(failed), '3rd preview from this customer');
+  assert.deepEqual(posts(calls).map((e) => e.author.name), ['New preview', 'Cover ready', 'New preview', 'Preview failed']);
+});
+
+test('counts read as English ordinals', async (t) => {
+  withWebhook(t, WEBHOOK);
+  const calls = stubDiscord(t);
+  for (const n of [1, 2, 3, 4, 11, 12, 13, 21, 22, 23, 101, 111]) {
+    await announcePreview(req, preview({ counts: { upload: n, preview: n, by: 'ip' } })).done({ coverUrl: COVER });
+  }
+  const covers = posts(calls).filter((e) => e.author.name === 'Cover ready');
+  assert.deepEqual(covers.map((e) => countOf(e).split(' ')[0]), ['1st', '2nd', '3rd', '4th', '11th', '12th', '13th', '21st', '22nd', '23rd', '101st', '111th']);
+});
+
+test('without a count, the cards go out without the field', async (t) => {
+  withWebhook(t, WEBHOOK);
+  const calls = stubDiscord(t);
+  await announcePreview(req, preview({ counts: Promise.resolve(null) })).done({ coverUrl: COVER });
+  await announcePreview(req, preview({ counts: Promise.reject(new Error('upstash down')) })).done({ coverUrl: COVER });
+  await announcePreview(req, preview()).done({ coverUrl: COVER });
+  assert.equal(posts(calls).length, 6);
+  assert.ok(posts(calls).every((e) => countOf(e) === undefined));
+});
