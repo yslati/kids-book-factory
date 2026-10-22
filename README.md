@@ -69,7 +69,7 @@ If `PREVIEW_TOKEN_SECRET` is unset the feature is simply off: every token is tre
 - `GET /api/preview-status/<id>` - resilience fallback (sync path returns `ready` directly).
 - `POST /api/log` - storefront error reports, forwarded to Discord's #logs (see [Discord channels](#discord-channels)).
 - `POST /api/events` - storefront analytics from the Shopify custom pixel, for #events.
-- `GET /api/cron/daily-summary` - Vercel cron, posts yesterday's totals to #events.
+- `GET /api/cron/daily-summary` - Vercel cron, posts yesterday's totals to #events, plus any days a skipped run missed.
 
 ## Discord channels
 
@@ -102,7 +102,8 @@ A Shopify **custom pixel** (`pixel/custom-pixel.js`) sends the storefront's even
 
 - **Live in #events:** each new visit (its source, landing page, the browser's visit count, location and device), each add-to-cart, each checkout start and each order (total, items, discount codes, first or returning customer, and the source of the visitor's first visit).
 - **Counted only:** page, product and collection views, cart views and searches, plus previews (counted by `/api/preview`).
-- **Daily summary:** a Vercel cron (`api/cron/daily-summary.js`, once a day between 06:00 and 06:59 UTC) posts the previous UTC day: visitors, visits, page views, the funnel from product views through previews, carts and checkouts to orders and revenue, conversion rates, and the top sources, pages and countries. Vercel authenticates it with `CRON_SECRET`; with that header, `?day=YYYY-MM-DD` posts any day.
+- **Daily summary:** a Vercel cron (`api/cron/daily-summary.js`, once a day between 06:00 and 06:59 UTC) posts the previous UTC day: visitors, visits, page views, the funnel from product views through previews, carts and checkouts to orders and revenue, conversion rates, and the top sources, pages and countries. Vercel authenticates it with `CRON_SECRET`; with that header, `?day=YYYY-MM-DD` posts that day again.
+- **Missed and repeated runs:** Vercel's cron delivery is best effort: a run can be skipped or delivered twice, and a failed one isn't retried. So each run posts every day since the last one summarised (`kbf:ev:summary:last`), oldest first, up to 30 days back; the first run starts from the earliest day with totals. One run posts at a time (`kbf:ev:summary:lock`), and a run with nothing due posts nothing. A summary Discord can't take right away is saved and sent later like any other post, so it isn't posted twice. About 11 Upstash commands a run (`lib/daily-summary.js`).
 - **Visits and sources:** a visit starts after 30 minutes without a page view. Its source is the landing page's UTM tags, else an ad click id (`gclid`, `fbclid`, `ttclid`...), else the referring site, else direct (`lib/traffic-source.js`). The first source a visitor arrives with is kept for 30 days, so later orders are attributed to it.
 - **Storage:** per UTC day in Upstash (`kbf:ev:<day>:*`, kept 40 days; unique visitors by Shopify client id), costing about 5 commands per page view and 10 per new visit, and one function invocation per event.
 - **Privacy:** only paths (query strings and checkout tokens removed), campaign tags, product titles, prices and quantities are stored or posted: never customer details or line item properties, which carry the child's name. Every visitor is tracked without asking for consent, which EU privacy law (GDPR, ePrivacy) generally requires for analytics.
