@@ -9,7 +9,8 @@
 // Flow:
 //   1. Verify origin + the one-time preview pass from /upload-url (else a
 //      Turnstile token) + rate limit (per-customer tier when signed in).
-//   2. Resolve cover + prompt SERVER-SIDE from Shopify by theme_id (anti-tamper).
+//   2. Resolve cover + prompt SERVER-SIDE from Shopify by theme_id (anti-tamper),
+//      and shrink a full-size photo to 1024px (lib/child-photo.js).
 //   3. Generate ([cover, child] + prompt) via lib/generate.js, which tries an
 //      ordered chain of models until one returns a cover.
 //   4. Re-encode the cover as a JPEG (lib/cover-image.js) and persist it to R2
@@ -28,6 +29,7 @@ import { publicUrl, putObject, r2Configured } from '../lib/r2.js';
 import { resolveBook, shopifyConfigured } from '../lib/shopify.js';
 import { generateCover, generationConfigured } from '../lib/generate.js';
 import { buildPreviewPrompt } from '../lib/prompt.js';
+import { childPhotoUrl } from '../lib/child-photo.js';
 import { resolveBookLanguage } from '../lib/book-languages.js';
 import { verifyCustomerToken } from '../lib/customer-token.js';
 import { tagCustomerPreviewLimit } from '../lib/customer-tag.js';
@@ -153,11 +155,10 @@ async function handler(req, res) {
   });
 
   try {
-    // 2. Resolve cover + prompt from the product's own metafields.
-    const book = await resolveBook(themeId);
+    // 2. Resolve cover + prompt from the product's own metafields, while the
+    //    photo is checked (and shrunk if full-size) for the generator.
+    const [book, childUrl] = await Promise.all([resolveBook(themeId), childPhotoUrl(photoKey)]);
     const prompt = buildPreviewPrompt(book.prompt, { language, childName, age: ageText });
-
-    const childUrl = publicUrl(photoKey);
 
     // 3. Generate, falling back down the model chain on failure.
     const generated = await generateCover(book.coverUrl, childUrl, prompt, {
