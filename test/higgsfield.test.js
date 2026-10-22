@@ -2,7 +2,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { nearestAspectRatio, generateWithHiggsfield, higgsfieldConfigured } from '../lib/higgsfield.js';
+import { nearestAspectRatio, generateWithHiggsfield, higgsfieldConfigured, failureDetail } from '../lib/higgsfield.js';
 
 const FLARE_MEDIUM = { model: 'marketing-studio/image/flare', quality: 'medium' };
 const STATUS_URL = 'https://api.higgsfield.ai/requests/req-1/status';
@@ -112,6 +112,25 @@ test('a moderated (nsfw) job throws', async (t) => {
     generateWithHiggsfield('https://c/cover.jpg', 'https://c/child.jpg', 'p', { ...FLARE_MEDIUM, timeoutMs: 20000 }),
     /higgsfield-nsfw/
   );
+});
+
+test('a failed job logs Higgsfield\'s reason and request id, never the inputs', async (t) => {
+  withKey(t);
+  stubFetch(t, (url) => url === STATUS_URL
+    ? json({ status: 'failed', request_id: 'req-1', error: 'Input image too large', input: { prompt: 'Emma' } })
+    : json({ status: 'queued', request_id: 'req-1', status_url: STATUS_URL, cancel_url: CANCEL_URL }));
+  const warned = [];
+  t.mock.method(console, 'warn', (...args) => { warned.push(args.join(' ')); });
+  await assert.rejects(
+    generateWithHiggsfield('https://c/cover.jpg', 'https://c/child.jpg', 'p', { ...FLARE_MEDIUM, timeoutMs: 20000 }),
+    /^Error: higgsfield-failed$/
+  );
+  assert.deepEqual(warned, ['[higgsfield] marketing-studio/image/flare failed: request_id=req-1 error=Input image too large']);
+});
+
+test('a failure without a reason lists the fields Higgsfield sent', () => {
+  assert.equal(failureDetail({ status: 'failed', images: [] }), 'no reason given (fields: status, images)');
+  assert.equal(failureDetail({ status: 'failed', error: { code: 42 } }), 'error={"code":42}');
 });
 
 test('gives up at the timeout and asks Higgsfield to cancel', async (t) => {
