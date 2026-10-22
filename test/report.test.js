@@ -83,6 +83,17 @@ test('a clean success is not reported', async (t) => {
   assert.equal(posts.length, 0);
 });
 
+test('a Node deprecation warning alone is not reported', async (t) => {
+  const posts = captureDiscord(t);
+  const handler = reported(async (req, res) => {
+    // Node's own wording, printed through console.error on the first url.parse().
+    console.error('(node:7) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead.');
+    return res.status(200).json({ day: '2026-10-21', posted: true });
+  });
+  await handler(mockReq({ method: 'GET', url: '/api/cron/daily-summary' }), mockRes());
+  assert.equal(posts.length, 0);
+});
+
 test('a success that logged a warning is reported with its timeline', async (t) => {
   const posts = captureDiscord(t);
   const handler = reported(async (req, res) => {
