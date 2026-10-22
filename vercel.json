@@ -21,9 +21,30 @@
     },
     "api/cron/daily-summary.js": {
       "maxDuration": 30
+    },
+    "api/share.js": {
+      "maxDuration": 10
     }
   },
   "rewrites": [
+    {
+      "source": "/",
+      "has": [{ "type": "host", "value": "s.booktokids.com" }],
+      "destination": "/api/share"
+    },
+    {
+      "source": "/:id([a-z0-9-]{1,40})",
+      "has": [{ "type": "host", "value": "s.booktokids.com" }],
+      "destination": "/api/share?id=:id"
+    },
+    {
+      "source": "/share",
+      "destination": "/api/share"
+    },
+    {
+      "source": "/share/:id",
+      "destination": "/api/share?id=:id"
+    },
     {
       "source": "/upload-url",
       "destination": "/api/upload-url"
