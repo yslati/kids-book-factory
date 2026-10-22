@@ -70,6 +70,7 @@ If `PREVIEW_TOKEN_SECRET` is unset the feature is simply off: every token is tre
 - `POST /api/log` - storefront error reports, forwarded to Discord's #logs (see [Discord channels](#discord-channels)).
 - `POST /api/events` - storefront analytics from the Shopify custom pixel, for #events.
 - `GET /api/cron/daily-summary` - Vercel cron, posts yesterday's totals to #events, plus any days a skipped run missed.
+- `GET /api/cron/higgsfield` - Vercel cron, posts the daily Higgsfield account check to #higgsfield.
 
 ## Discord channels
 
@@ -80,6 +81,7 @@ The backend posts to Discord channels through their incoming webhooks, one envir
 | #logs | `DISCORD_WEBHOOK_LOGS` | `lib/report.js` | API and storefront warnings and errors |
 | #previews | `DISCORD_WEBHOOK_PREVIEWS` | `lib/preview-feed.js` | every preview: the photo, then the cover |
 | #events | `DISCORD_WEBHOOK_EVENTS` | `lib/event-feed.js` | visits, add-to-carts, checkouts and orders live, plus a daily summary |
+| #higgsfield | `DISCORD_WEBHOOK_HIGGSFIELD` | `lib/higgsfield-feed.js` | Higgsfield alerts live, plus a daily account check |
 
 ### #logs: error reports
 
@@ -108,6 +110,13 @@ A Shopify **custom pixel** (`pixel/custom-pixel.js`) sends the storefront's even
 - **Storage:** per UTC day in Upstash (`kbf:ev:<day>:*`, kept 40 days; unique visitors by Shopify client id), costing about 5 commands per page view and 10 per new visit, and one function invocation per event.
 - **Privacy:** only paths (query strings and checkout tokens removed), campaign tags, product titles, prices and quantities are stored or posted: never customer details or line item properties, which carry the child's name. Every visitor is tracked without asking for consent, which EU privacy law (GDPR, ePrivacy) generally requires for analytics.
 - **Trust:** the pixel's requests can't be authenticated, so anyone could post fake events. Payloads are validated and each IP is capped at 300 events per 10 minutes per instance; Shopify's orders are the source of truth for revenue.
+
+### #higgsfield: the generation account
+
+- **Live alerts:** each Higgsfield attempt in the cover chain (`lib/generate.js`) is tracked after the response. When Higgsfield refuses one for a reason that won't fix itself, the channel gets an alert: out of credits (`403`) or key rejected (`401`) for the whole account, model not found (`404`), blocked (`423`) or disabled (`503`) per model. Each problem alerts at most once an hour (`kbf:hf:alert:*`), so an empty balance doesn't post once per preview.
+- **Daily check:** a Vercel cron (`api/cron/higgsfield.js`, once a day between 07:00 and 07:59 UTC) posts whether the key works, whether each chain model is still in the account's catalog (`GET /models`) and accepted by Higgsfield's free `POST /estimate/<model>` quote, its price, and the previous UTC day's jobs per model (completed with average time and, for fixed-price models, the spend; failed, NSFW, timed out or refused). Separate messages list models added to or removed from the catalog and any change in a chain model's quote since the last check (`kbf:hf:catalog`, `kbf:hf:prices`). A repeated run the same day posts nothing (`kbf:hf:check:<day>`); with `CRON_SECRET`, `?force=1` runs it again.
+- **Balance:** Higgsfield has no API for the account balance (October 2026: none in the docs, the OpenAPI file or the official SDK; the higgsfield.ai website's credits are a separate wallet). Running out therefore shows as the live out-of-credits alert, and the daily check links to the console.
+- **Cost:** about 3 Upstash commands per attempt; the daily check makes 4 Higgsfield calls, none billed, about 6 Upstash commands and one function invocation.
 
 ## Tests
 

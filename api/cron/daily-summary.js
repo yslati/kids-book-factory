@@ -5,25 +5,17 @@
 // Vercel sends "Authorization: Bearer $CRON_SECRET"; with that header,
 // ?day=YYYY-MM-DD posts that day again, whether or not it went out already.
 
-import { timingSafeEqual } from 'node:crypto';
 import { getRedis } from '../../lib/redis.js';
 import { readDay } from '../../lib/event-stats.js';
 import { eventsChannelOn, postSummary } from '../../lib/event-feed.js';
 import { postDueSummaries } from '../../lib/daily-summary.js';
 import { withReporting } from '../../lib/report.js';
-
-function authorized(req) {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return false;
-  const sent = Buffer.from(String(req.headers.authorization || ''));
-  const expected = Buffer.from('Bearer ' + secret);
-  return sent.length === expected.length && timingSafeEqual(sent, expected);
-}
+import { cronAuthorized } from '../../lib/cron-auth.js';
 
 export default withReporting(handler);
 
 async function handler(req, res) {
-  if (!authorized(req)) return res.status(401).json({ error: 'unauthorized' });
+  if (!cronAuthorized(req)) return res.status(401).json({ error: 'unauthorized' });
   const redis = getRedis();
   if (!redis) return res.status(503).json({ error: 'storage-not-configured' });
   // Before anything counts as summarised.
