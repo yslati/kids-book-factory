@@ -67,6 +67,7 @@ If `PREVIEW_TOKEN_SECRET` is unset the feature is simply off: every token is tre
 - `POST /api/upload-url` - validate + presign an R2 PUT.
 - `POST /api/preview` - resolve book → generate → store → return `preview_url`.
 - `GET /api/preview-status/<id>` - resilience fallback (sync path returns `ready` directly).
+- `POST /api/custom-story` - a cover for a story the catalog doesn't have (see [Custom stories](#custom-stories)), and its add-to-cart follow-up.
 - `POST /api/log` - storefront error reports, forwarded to Discord's #logs (see [Discord channels](#discord-channels)).
 - `POST /api/events` - storefront analytics from the Shopify custom pixel, for #events.
 - `GET /api/cron/daily-summary` - Vercel cron, posts yesterday's totals to #events, plus any days a skipped run missed.
@@ -82,6 +83,7 @@ The backend posts to Discord channels through their incoming webhooks, one envir
 | #previews | `DISCORD_WEBHOOK_PREVIEWS` | `lib/preview-feed.js` | every preview: the photo, then the cover |
 | #events | `DISCORD_WEBHOOK_EVENTS` | `lib/event-feed.js` | visits, add-to-carts, checkouts and orders live, plus a daily summary |
 | #higgsfield | `DISCORD_WEBHOOK_HIGGSFIELD` | `lib/higgsfield-feed.js` | Higgsfield alerts live, plus a daily account check |
+| #custom-generation | `DISCORD_WEBHOOK_CUSTOM` | `lib/custom-feed.js` | every custom story request: the answers and photo, the cover, the add-to-cart |
 
 ### #logs: error reports
 
@@ -110,6 +112,18 @@ A Shopify **custom pixel** (`pixel/custom-pixel.js`) sends the storefront's even
 - **Storage:** per UTC day in Upstash (`kbf:ev:<day>:*`, kept 40 days; unique visitors by Shopify client id), costing about 5 commands per page view and 10 per new visit, and one function invocation per event.
 - **Privacy:** only paths (query strings and checkout tokens removed), campaign tags, product titles, prices and quantities are stored or posted: never customer details or line item properties, which carry the child's name. Every visitor is tracked without asking for consent, which EU privacy law (GDPR, ePrivacy) generally requires for analytics.
 - **Trust:** the pixel's requests can't be authenticated, so anyone could post fake events. Payloads are validated and each IP is capped at 300 events per 10 minutes per instance; Shopify's orders are the source of truth for revenue.
+
+### #custom-generation: custom story requests
+
+The storefront's "Dream up their story" page (theme `sections/kb-custom-story.liquid`) asks for a story world, boy or girl, the child's name, optional age, photo, a free-text story idea and an optional occasion. `/api/custom-story` posts all of it with the photo as generation starts, then the cover or the error as a follow-up linked to it, and a third card if the parent adds the custom book to the cart. Like #previews, it shows the child's photo, name and age by design; keep it private.
+
+## Custom stories
+
+`POST /api/custom-story` paints a cover for a story the catalog doesn't have. The photo goes up through `/upload-url` as usual, and its one-time pass covers this call.
+
+- **Reference cover:** the theme sends one of our product handles (picked per world and boy/girl in the section's settings), and the backend reads that product's cover from Shopify, so the model keeps the series' look and layout while the scene, title and tagline come from the parent's idea (`lib/custom-prompt.js`). The parent's text is quoted as a description, never as instructions; covers stay child-safe, and named characters become original ones.
+- **Limits:** 3 custom covers per IP (or per signed-in customer) per 24h, plus the per-IP backstop shared with `/preview` (8 a day across both). Same model chain and cost as a preview.
+- **Storage:** the cover is `previews/<name>_<age>_en_custom-<world>_<id>.jpg` in R2, and `kbf:custom:<id>` in Upstash keeps the name, world and cover for 30 days so the add-to-cart card (`{ action: 'cart' }`) can only be posted for a real cover, once.
 
 ### #higgsfield: the generation account
 
