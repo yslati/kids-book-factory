@@ -9,6 +9,9 @@
 // new column at the end, so the backend can add fields without changing this
 // script.
 
+// Limits the script's access to this one spreadsheet.
+/** @OnlyCurrentDoc */
+
 const TAB = 'Requests';
 
 // Run once from the editor (Run → setup): creates the secret the backend
