@@ -13,6 +13,12 @@ test('the default prompt asks for 75% real child, 25% cover style', () => {
   assert.doesNotMatch(DEFAULT_PREVIEW_PROMPT, /85%/);
 });
 
+test('the default prompt takes pose and expression from the cover, not the photo', () => {
+  assert.match(DEFAULT_PREVIEW_PROMPT, /in the original character's exact pose, head angle, gaze and expression/);
+  assert.match(DEFAULT_PREVIEW_PROMPT, /Never copy the photo's straight-on pose or its expression/);
+  assert.doesNotMatch(DEFAULT_PREVIEW_PROMPT, /which teeth show/);
+});
+
 test('appends the language, the name with its no-leftover-letters rule, and the age', () => {
   const prompt = buildPreviewPrompt('BASE', {
     language: resolveBookLanguage('fr'),
