@@ -11,6 +11,20 @@
 
 const TAB = 'Requests';
 
+// Run once from the editor (Run → setup): creates the secret the backend
+// must send, unless there is one, adds the "Requests" tab, and logs the
+// secret to copy into SHEET_WEBHOOK_SECRET.
+function setup() {
+  const props = PropertiesService.getScriptProperties();
+  let secret = props.getProperty('SECRET');
+  if (!secret) {
+    secret = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
+    props.setProperty('SECRET', secret);
+  }
+  requestsTab();
+  Logger.log('SHEET_WEBHOOK_SECRET=' + secret);
+}
+
 function doPost(e) {
   let body;
   try {

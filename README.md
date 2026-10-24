@@ -146,9 +146,9 @@ Setup, once:
 
 1. Create a Google Sheet (for example "Book to Kids requests").
 2. Extensions → Apps Script. Replace the editor's contents with `sheet/apps-script.js` and save.
-3. Project Settings (gear) → Script properties → Add: `SECRET` = the value of `SHEET_WEBHOOK_SECRET`.
-4. Deploy → New deployment → type **Web app**, Execute as **Me**, Who has access **Anyone** → Deploy, and allow the permissions it asks for. Copy the web app URL (`https://script.google.com/macros/s/.../exec`).
-5. Set `SHEET_WEBHOOK_URL` (that URL) and `SHEET_WEBHOOK_SECRET` in Vercel (production), then redeploy. The "Requests" tab appears with the first request.
+3. Pick `setup` in the toolbar's function list and click Run, then allow the permissions it asks for (Google warns that the app isn't verified: it is your own script, so Advanced → Go to … → Allow). It creates the shared secret in the script's properties, adds the "Requests" tab and shows `SHEET_WEBHOOK_SECRET=…` in the execution log; running it again shows the same secret.
+4. Deploy → New deployment → type **Web app**, Execute as **Me**, Who has access **Anyone** → Deploy. Copy the web app URL (`https://script.google.com/macros/s/.../exec`).
+5. Set `SHEET_WEBHOOK_URL` (that URL) and `SHEET_WEBHOOK_SECRET` (the logged value) in Vercel (production, sensitive), then redeploy. Rows start with the next request.
 
 After editing the script, Deploy → Manage deployments → edit → Version: New version keeps the same URL.
 
