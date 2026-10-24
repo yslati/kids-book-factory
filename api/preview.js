@@ -24,8 +24,8 @@
 //      previews/<name>_<age>_<language>_<book>_<id>.<ext> (lib/object-names.js).
 //   5. Return the permanent R2 url.
 // The photo, then the cover or the error, also go to Discord's #previews
-// channel (lib/preview-feed.js), and the answers and outcome to the requests
-// sheet (lib/sheet.js).
+// channel (lib/preview-feed.js), and the answers, prompt and outcome to the
+// requests sheet's Book previews tab (lib/sheet.js).
 
 import { applyCors, isOriginAllowed } from '../lib/cors.js';
 import { verifyTurnstile } from '../lib/turnstile.js';
@@ -45,7 +45,7 @@ import { previewKey } from '../lib/object-names.js';
 import { coverForStorage } from '../lib/cover-image.js';
 import { withReporting } from '../lib/report.js';
 import { announcePreview } from '../lib/preview-feed.js';
-import { appendRow, previewFollowUp, requestRow, updateRow } from '../lib/sheet.js';
+import { appendRows, previewFollowUp, previewRow, TABS, updateRow } from '../lib/sheet.js';
 import { countPreview } from '../lib/visitor-counts.js';
 import { countEvent } from '../lib/event-stats.js';
 import { waitUntil } from '@vercel/functions';
@@ -71,7 +71,7 @@ async function followUp(req, res, body) {
   const limited = await checkRateLimit(req, 'preview-follow-up');
   if (!limited.success) return res.status(429).json({ error: 'rate-limited' });
   res.status(204).end();
-  waitUntil(updateRow(value.generationId, value.fields));
+  waitUntil(updateRow(TABS.previews, value.generationId, value.fields));
 }
 
 async function handler(req, res) {
@@ -175,8 +175,7 @@ async function handler(req, res) {
     startedAt,
     counts
   });
-  const record = (outcome) => waitUntil(appendRow(requestRow(req, {
-    form: 'Book',
+  const record = (outcome) => waitUntil(appendRows(TABS.previews, [previewRow(req, {
     book: themeId,
     childName,
     age: ageText,
@@ -185,13 +184,14 @@ async function handler(req, res) {
     customerId: customer.valid ? customer.customerId : null,
     generationId,
     startedAt
-  }, outcome)));
+  }, outcome)]));
 
+  let prompt = '';
   try {
     // 2. Resolve cover + prompt from the product's own metafields, while the
     //    photo is checked (and shrunk if full-size) for the generator.
     const [book, childUrl] = await Promise.all([resolveBook(themeId), childPhotoUrl(photoKey)]);
-    const prompt = buildPreviewPrompt(book.prompt, { language, childName, age: ageText });
+    prompt = buildPreviewPrompt(book.prompt, { language, childName, age: ageText });
 
     // 3. Generate, falling back down the model chain on failure.
     const generated = await generateCover(book.coverUrl, childUrl, prompt, {
@@ -246,7 +246,7 @@ async function handler(req, res) {
     }
 
     feed.done({ coverUrl: previewUrl, bookTitle: book.title, attempt: generated.attempt, temporary: previewUrl === generatedUrl });
-    record({ coverUrl: previewUrl, bookTitle: book.title });
+    record({ coverUrl: previewUrl, bookTitle: book.title, attempt: generated.attempt, prompt });
     waitUntil(countEvent(getRedis(), 'preview_ready'));
     return res.status(200).json({
       preview_url: previewUrl,
@@ -262,7 +262,7 @@ async function handler(req, res) {
     console.error('[preview] failed:', err && err.stack ? err.stack : err);
     const detail = String((err && err.message) || err);
     feed.done({ error: detail });
-    record({ error: detail });
+    record({ error: detail, prompt });
     waitUntil(countEvent(getRedis(), 'preview_failed'));
     if (code === 'product-not-found' || code === 'prompt-missing' || code === 'cover-missing') {
       return res.status(422).json({ error: code, status: 'failed', detail });

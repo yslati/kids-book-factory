@@ -1,8 +1,9 @@
 // POST /api/events
 // Storefront analytics from the Shopify custom pixel (pixel/custom-pixel.js):
 // page, product and collection views, searches, cart and checkout steps, and
-// orders. Counts them for the daily summary (lib/event-stats.js) and posts
-// visits, add-to-carts, checkouts and orders to #events (lib/event-feed.js).
+// orders. Counts them for the daily summary (lib/event-stats.js), posts
+// visits, add-to-carts, checkouts and orders to #events (lib/event-feed.js)
+// and adds them to the requests sheet (lib/sheet.js).
 //
 // Body: text/plain JSON, shaped as lib/storefront-events.js describes → 204,
 // sent before any counting or posting, which run after the response.
@@ -18,6 +19,7 @@ import { visitorOf } from '../lib/discord.js';
 import { normaliseEvent } from '../lib/storefront-events.js';
 import { recordEvent } from '../lib/event-stats.js';
 import { postLiveEvent } from '../lib/event-feed.js';
+import { appendRows, storefrontRows } from '../lib/sheet.js';
 
 // A visitor sends a few events per page; this only stops a flood.
 const LIMIT_WINDOW_MS = 10 * 60 * 1000;
@@ -46,7 +48,11 @@ function overLimit(ip) {
 async function record(event, visitor) {
   try {
     const recorded = await recordEvent(getRedis(), event, { country: visitor.country, ownHosts: OWN_HOSTS });
-    await postLiveEvent(event, recorded, visitor);
+    const sheet = storefrontRows(event, recorded, visitor);
+    await Promise.all([
+      postLiveEvent(event, recorded, visitor),
+      sheet && appendRows(sheet.tab, sheet.rows)
+    ]);
   } catch (e) {
     console.error('[events] ' + event.name + ' failed:', (e && e.stack) || e);
   }

@@ -22,8 +22,8 @@
 //   4. Re-encode and store the cover in R2 as
 //      previews/<name>_<age>_en_custom-<world>_<id>.jpg.
 // Everything the parent sent, then the cover or the error, goes to Discord's
-// #custom-generation channel (lib/custom-feed.js) and to the requests sheet
-// (lib/sheet.js).
+// #custom-generation channel (lib/custom-feed.js) and, with the prompt, to
+// the requests sheet's Custom stories tab (lib/sheet.js).
 
 import { waitUntil } from '@vercel/functions';
 import { applyCors, isOriginAllowed } from '../lib/cors.js';
@@ -34,14 +34,14 @@ import { checkRateLimit, clientIp } from '../lib/ratelimit.js';
 import { publicUrl, putObject, r2Configured } from '../lib/r2.js';
 import { resolveBook, shopifyConfigured } from '../lib/shopify.js';
 import { generateCover, generationConfigured } from '../lib/generate.js';
-import { WORLDS, buildCustomPrompt } from '../lib/custom-prompt.js';
+import { buildCustomPrompt } from '../lib/custom-prompt.js';
 import { childPhotoUrl } from '../lib/child-photo.js';
 import { verifyCustomerToken } from '../lib/customer-token.js';
 import { previewKey } from '../lib/object-names.js';
 import { coverForStorage } from '../lib/cover-image.js';
 import { withReporting } from '../lib/report.js';
 import { announceCustomStory, postCustomCart } from '../lib/custom-feed.js';
-import { appendRow, requestRow, updateRow } from '../lib/sheet.js';
+import { appendRows, customRow, TABS, updateRow } from '../lib/sheet.js';
 import { claimCartPost, normaliseCart, normaliseGenerate, readCustomStory, saveCustomStory } from '../lib/custom-story.js';
 
 // vercel.json gives this function 60s; generation must finish within 50s.
@@ -80,7 +80,7 @@ async function cart(req, res, body) {
   const record = await readCustomStory(redis, value.generationId);
   if (!record) return res.status(404).json({ error: 'unknown-generation' });
   res.status(204).end();
-  waitUntil(updateRow(value.generationId, { 'Added to cart': value.variant || 'Yes' }));
+  waitUntil(updateRow(TABS.custom, value.generationId, { 'Added to cart': value.variant || 'Yes' }));
   if (await claimCartPost(redis, value.generationId)) waitUntil(postCustomCart(req, record, value));
 }
 
@@ -116,24 +116,17 @@ async function generate(req, res, body, startedAt) {
     customerId: customer.valid ? customer.customerId : null,
     startedAt
   });
-  const record = (outcome) => waitUntil(appendRow(requestRow(req, {
-    form: 'Custom story',
-    book: WORLDS[r.world],
-    hero: r.gender === 'girl' ? 'Girl' : 'Boy',
-    childName: r.childName,
-    age: r.age,
-    language: 'English',
-    occasion: r.occasion,
-    brief: r.brief,
+  const record = (outcome) => waitUntil(appendRows(TABS.custom, [customRow(req, {
+    ...r,
     photoUrl,
     customerId: customer.valid ? customer.customerId : null,
-    generationId: r.generationId,
     startedAt
-  }, outcome)));
+  }, outcome)]));
 
+  let prompt = '';
   try {
     const [book, childUrl] = await Promise.all([resolveBook(r.reference), childPhotoUrl(r.photoKey)]);
-    const prompt = buildCustomPrompt(r);
+    prompt = buildCustomPrompt(r);
     const generated = await generateCover(book.coverUrl, childUrl, prompt, {
       coverAspect: book.coverAspect,
       deadline: startedAt + GENERATION_BUDGET_MS
@@ -167,14 +160,14 @@ async function generate(req, res, body, startedAt) {
       }))
       .catch((e) => console.warn('[custom-story] record not saved:', (e && e.message) || e)));
     feed.done({ coverUrl, attempt: generated.attempt, temporary: coverUrl === generated.url });
-    record({ coverUrl });
+    record({ coverUrl, attempt: generated.attempt, prompt });
 
     return res.status(200).json({ preview_url: coverUrl, generation_id: r.generationId, status: 'ready' });
   } catch (err) {
     console.error('[custom-story] failed:', err && err.stack ? err.stack : err);
     const detail = String((err && err.message) || err);
     feed.done({ error: detail });
-    record({ error: detail });
+    record({ error: detail, prompt });
     if (detail === 'product-not-found' || detail === 'cover-missing') {
       return res.status(422).json({ error: detail, status: 'failed' });
     }
