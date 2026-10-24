@@ -6,6 +6,12 @@
 // → { preview_url, generation_id, status: 'ready', remaining }
 // 429 → { error: 'rate-limited', login_required, remaining: 0 }
 //
+// Also takes the preview page's follow-ups for the requests sheet, here
+// rather than in their own function since Vercel's Hobby plan caps a
+// deployment at 12:
+//   { action: 'occasion', generation_id, occasion }            → 204
+//   { action: 'cart', generation_id, occasion?, variant }      → 204
+//
 // Flow:
 //   1. Verify origin + the one-time preview pass from /upload-url (else a
 //      Turnstile token) + rate limit (per-customer tier when signed in).
@@ -18,7 +24,8 @@
 //      previews/<name>_<age>_<language>_<book>_<id>.<ext> (lib/object-names.js).
 //   5. Return the permanent R2 url.
 // The photo, then the cover or the error, also go to Discord's #previews
-// channel (lib/preview-feed.js).
+// channel (lib/preview-feed.js), and the answers and outcome to the requests
+// sheet (lib/sheet.js).
 
 import { applyCors, isOriginAllowed } from '../lib/cors.js';
 import { verifyTurnstile } from '../lib/turnstile.js';
@@ -38,6 +45,7 @@ import { previewKey } from '../lib/object-names.js';
 import { coverForStorage } from '../lib/cover-image.js';
 import { withReporting } from '../lib/report.js';
 import { announcePreview } from '../lib/preview-feed.js';
+import { appendRow, previewFollowUp, requestRow, updateRow } from '../lib/sheet.js';
 import { countPreview } from '../lib/visitor-counts.js';
 import { countEvent } from '../lib/event-stats.js';
 import { waitUntil } from '@vercel/functions';
@@ -55,6 +63,17 @@ function minRemaining(a, b) {
 
 export default withReporting(handler);
 
+// The preview page's follow-up: answered at once, then the sheet fills in the
+// row it already has for this generation (and changes nothing otherwise).
+async function followUp(req, res, body) {
+  const { value, error } = previewFollowUp(body);
+  if (error) return res.status(400).json({ error });
+  const limited = await checkRateLimit(req, 'preview-follow-up');
+  if (!limited.success) return res.status(429).json({ error: 'rate-limited' });
+  res.status(204).end();
+  waitUntil(updateRow(value.generationId, value.fields));
+}
+
 async function handler(req, res) {
   const startedAt = Date.now();
   if (applyCors(req, res)) return;
@@ -64,15 +83,17 @@ async function handler(req, res) {
     return res.status(403).json({ error: 'forbidden-origin' });
   }
 
-  if (!r2Configured()) return res.status(503).json({ error: 'storage-not-configured' });
-  if (!shopifyConfigured()) return res.status(503).json({ error: 'shopify-not-configured' });
-  if (!generationConfigured()) return res.status(503).json({ error: 'generation-not-configured' });
-
   let body = req.body;
   if (typeof body === 'string') {
     try { body = JSON.parse(body); } catch (e) { body = {}; }
   }
   body = body || {};
+
+  if (body.action) return followUp(req, res, body);
+
+  if (!r2Configured()) return res.status(503).json({ error: 'storage-not-configured' });
+  if (!shopifyConfigured()) return res.status(503).json({ error: 'shopify-not-configured' });
+  if (!generationConfigured()) return res.status(503).json({ error: 'generation-not-configured' });
 
   const themeId = String(body.theme_id || '').trim();
   const photoKey = String(body.photo_key || '').trim();
@@ -142,8 +163,9 @@ async function handler(req, res) {
   // The daily summary's preview funnel (lib/event-stats.js).
   waitUntil(countEvent(getRedis(), 'preview_started'));
 
+  const photoUrl = publicUrl(photoKey);
   const feed = announcePreview(req, {
-    photoUrl: publicUrl(photoKey),
+    photoUrl,
     themeId,
     generationId,
     childName,
@@ -153,6 +175,17 @@ async function handler(req, res) {
     startedAt,
     counts
   });
+  const record = (outcome) => waitUntil(appendRow(requestRow(req, {
+    form: 'Book',
+    book: themeId,
+    childName,
+    age: ageText,
+    language: language.name,
+    photoUrl,
+    customerId: customer.valid ? customer.customerId : null,
+    generationId,
+    startedAt
+  }, outcome)));
 
   try {
     // 2. Resolve cover + prompt from the product's own metafields, while the
@@ -213,6 +246,7 @@ async function handler(req, res) {
     }
 
     feed.done({ coverUrl: previewUrl, bookTitle: book.title, attempt: generated.attempt, temporary: previewUrl === generatedUrl });
+    record({ coverUrl: previewUrl, bookTitle: book.title });
     waitUntil(countEvent(getRedis(), 'preview_ready'));
     return res.status(200).json({
       preview_url: previewUrl,
@@ -228,6 +262,7 @@ async function handler(req, res) {
     console.error('[preview] failed:', err && err.stack ? err.stack : err);
     const detail = String((err && err.message) || err);
     feed.done({ error: detail });
+    record({ error: detail });
     waitUntil(countEvent(getRedis(), 'preview_failed'));
     if (code === 'product-not-found' || code === 'prompt-missing' || code === 'cover-missing') {
       return res.status(422).json({ error: code, status: 'failed', detail });

@@ -65,7 +65,7 @@ If `PREVIEW_TOKEN_SECRET` is unset the feature is simply off: every token is tre
 ## Endpoints
 
 - `POST /api/upload-url` - validate + presign an R2 PUT.
-- `POST /api/preview` - resolve book → generate → store → return `preview_url`.
+- `POST /api/preview` - resolve book → generate → store → return `preview_url`. Also takes the preview page's `{ action: 'occasion' | 'cart' }` follow-ups for the [requests sheet](#requests-sheet).
 - `GET /api/preview-status/<id>` - resilience fallback (sync path returns `ready` directly).
 - `POST /api/custom-story` - a cover for a story the catalog doesn't have (see [Custom stories](#custom-stories)), and its add-to-cart follow-up.
 - `POST /api/log` - storefront error reports, forwarded to Discord's #logs (see [Discord channels](#discord-channels)).
@@ -94,7 +94,7 @@ The backend posts to Discord channels through their incoming webhooks, one envir
 
 ### #previews: photo and cover
 
-When `/api/preview` starts generating (after Turnstile and the rate limits), it posts the child's photo with the book (linked to its product page), language, customer and country. When it finishes, a follow-up carries the cover (with the time, model and its direct R2 link, or a warning and the provider's temporary link when the copy to R2 failed) or the error. Discord webhooks can't send real replies, so the follow-up's title links back to the photo message and repeats the photo as a thumbnail, which keeps each pair readable when previews overlap. The follow-up goes out after the response, through `waitUntil`.
+When `/api/preview` starts generating (after Turnstile and the rate limits), it posts the child's photo with the book (linked to its product page), language, occasion (when the parent picked one), customer and country. When it finishes, a follow-up carries the cover (with the time, model and its direct R2 link, or a warning and the provider's temporary link when the copy to R2 failed) or the error. Discord webhooks can't send real replies, so the follow-up's title links back to the photo message and repeats the photo as a thumbnail, which keeps each pair readable when previews overlap. The follow-up goes out after the response, through `waitUntil`.
 
 Each card also shows a **Count** field ("2nd upload from this IP", "3rd preview from this customer") from `lib/visitor-counts.js`: a signed-in customer counts by account, everyone else by IP, so people sharing a network count together. Uploads are counted when `/upload-url` issues the upload link, previews when generation starts (failed ones included). Each count is a Redis `INCR` on `kbf:count:<upload|preview>:<customer:id|ip:address>` that expires 30 days after its last increment; 2 commands per upload, 3 per preview.
 
@@ -132,6 +132,26 @@ The storefront's "Dream up their story" page (theme `sections/kb-custom-story.li
 - **Balance:** Higgsfield has no API for the account balance (October 2026: none in the docs, the OpenAPI file or the official SDK; the higgsfield.ai website's credits are a separate wallet). Running out therefore shows as the live out-of-credits alert, and the daily check links to the console.
 - **Cost:** about 3 Upstash commands per attempt; the daily check makes 4 Higgsfield calls, none billed, about 6 Upstash commands and one function invocation.
 
+## Requests sheet
+
+Every cover request, from a product page (`/api/preview`) or the custom story page (`/api/custom-story`), also becomes a row in a Google Sheet, so the answers can be filtered, counted and downloaded (File → Download → Microsoft Excel). `lib/sheet.js` posts the row after the response through `waitUntil`; a sheet that is down or slow (8 s) only costs that change, and each lost one is reported to #logs with its form and generation id (Discord's #previews and #custom-generation still have the request).
+
+- **Columns:** Date, Form (Book or Custom story), Status (Ready or Failed), Book / world, Hero (custom only), Child's name, Age, Language, Occasion, Story idea (custom only), Photo, Cover, Added to cart, Seconds, Customer (Guest or the signed-in id), Country, City, Device, Error, Generation. Both forms send the same columns; a field the backend starts sending later gets a new column at the end by itself.
+- **Filled in later:** product-page books ask for the occasion on the preview page, after the cover, so the parent sees their cover with no extra questions first. The page posts `{ action: 'occasion', generation_id, occasion }` to `/api/preview` when the parent picks or clears one (the last choice after 1.5 s), and `{ action: 'cart', generation_id, occasion, variant }` when they add the book to the cart; the custom story's own cart follow-up sets Added to cart too. They answer `204` and change only the row with that Generation id (the newest one), so they can't add rows; a cart message without an occasion leaves the parent's answer alone, so a shared link opened elsewhere can't clear it. When the row isn't there yet (it is written while the preview page loads), the change is tried once more after 5 s; a preview from before the sheet existed has no row and is skipped. 30 follow-ups per IP per hour (`preview-follow-up`).
+- **Safety:** the script refuses any post without the shared secret, and text that starts with `=`, `+`, `-` or `@` (or looks like a number) is written as plain text, so a name or story idea can't become a formula.
+- **Privacy:** like #previews, rows hold the child's name, age and photo link (the photo itself stays in R2 and its link stops working when the bucket deletes it after 30 days). Rows are kept until deleted. Keep the sheet shared only with the team, and list Google as a processor in the privacy policy.
+- **Cost:** free. Apps Script and Google Sheets have no charge at this volume (a sheet holds 10 million cells, about 500,000 rows); one extra outbound request per cover.
+
+Setup, once:
+
+1. Create a Google Sheet (for example "Book to Kids requests").
+2. Extensions → Apps Script. Replace the editor's contents with `sheet/apps-script.js` and save.
+3. Project Settings (gear) → Script properties → Add: `SECRET` = the value of `SHEET_WEBHOOK_SECRET`.
+4. Deploy → New deployment → type **Web app**, Execute as **Me**, Who has access **Anyone** → Deploy, and allow the permissions it asks for. Copy the web app URL (`https://script.google.com/macros/s/.../exec`).
+5. Set `SHEET_WEBHOOK_URL` (that URL) and `SHEET_WEBHOOK_SECRET` in Vercel (production), then redeploy. The "Requests" tab appears with the first request.
+
+After editing the script, Deploy → Manage deployments → edit → Version: New version keeps the same URL.
+
 ## Tests
 
 ```bash
@@ -147,7 +167,7 @@ npx vercel dev         # local, http://localhost:3000
 npx vercel deploy --prod
 ```
 
-Env (see `.env.example`): `HIGGSFIELD_KEY` (the fal keys are commented out while fal is off), `R2_*` (+ public bucket URL), `SHOPIFY_SHOP` + `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET` (scopes `read_products`, `write_customers`), `TURNSTILE_SECRET`, `UPSTASH_*`, `PREVIEW_TOKEN_SECRET`, `ALLOWED_ORIGIN`, `DISCORD_WEBHOOK_*`, and optionally `SHARE_BASE_URL` + `STORE_URL` for short share links (`api/share.js`, served on `s.booktokids.com`). The backend obtains and refreshes Shopify's short-lived Admin API token automatically. Add the same values in the Vercel project, then put the deployed URL in the theme section's **Backend URL** setting.
+Env (see `.env.example`): `HIGGSFIELD_KEY` (the fal keys are commented out while fal is off), `R2_*` (+ public bucket URL), `SHOPIFY_SHOP` + `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET` (scopes `read_products`, `write_customers`), `TURNSTILE_SECRET`, `UPSTASH_*`, `PREVIEW_TOKEN_SECRET`, `ALLOWED_ORIGIN`, `DISCORD_WEBHOOK_*`, optionally `SHEET_WEBHOOK_URL` + `SHEET_WEBHOOK_SECRET` for the [requests sheet](#requests-sheet), and optionally `SHARE_BASE_URL` + `STORE_URL` for short share links (`api/share.js`, served on `s.booktokids.com`). The backend obtains and refreshes Shopify's short-lived Admin API token automatically. Add the same values in the Vercel project, then put the deployed URL in the theme section's **Backend URL** setting.
 
 Smoke test:
 ```bash
