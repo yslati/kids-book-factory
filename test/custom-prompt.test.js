@@ -24,6 +24,7 @@ test('quotes the idea as a description and names the world, occasion, child and 
   assert.match(prompt, /"LINA AND THE \.\.\."/);
   assert.match(prompt, /the child is a girl, 5 years old/);
   assert.match(prompt, /75% the real child and 25% our animation style/);
+  assert.match(prompt, /Never copy the photo's straight-on pose or its expression/);
   assert.match(prompt, /ONLY a reference for style and layout/);
   assert.match(prompt, /Keep its spine down the left edge/);
   assert.match(prompt, /not even small in the background or in a crowd/);
