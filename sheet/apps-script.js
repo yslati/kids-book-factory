@@ -15,11 +15,15 @@
 // The tabs setup() lays out, in this order; others are added when used.
 const TABS = ['Book previews', 'Custom stories', 'Orders', 'Carts', 'Checkouts', 'Visits', 'Daily'];
 const MAX_ROWS = 50;
+// Rows stay one line high, so a prompt's line breaks don't stretch them;
+// the cell still holds the full text.
+const ROW_HEIGHT = 21;
 
 // Run from the editor (Run → setup): creates the secret the backend must
 // send, unless there is one, lays out the tabs, removes the empty sheet a
 // new spreadsheet starts with (and the empty "Requests" tab of the first
-// version), and logs the secret to copy into SHEET_WEBHOOK_SECRET.
+// version), sets every data row to one line, and logs the secret to copy
+// into SHEET_WEBHOOK_SECRET.
 function setup() {
   const props = PropertiesService.getScriptProperties();
   let secret = props.getProperty('SECRET');
@@ -35,6 +39,7 @@ function setup() {
     const leftover = sheet.getSheetId() === 0 || sheet.getName() === 'Requests';
     const empty = sheet.getLastRow() === 0 && sheet.getLastColumn() === 0;
     if (leftover && empty && TABS.indexOf(sheet.getName()) === -1) book.deleteSheet(sheet);
+    else if (sheet.getLastRow() > 1) sheet.setRowHeightsForced(2, sheet.getLastRow() - 1, ROW_HEIGHT);
   });
   Logger.log('SHEET_WEBHOOK_SECRET=' + secret);
 }
@@ -68,6 +73,7 @@ function doPost(e) {
       rows.forEach((row) => Object.keys(row).forEach((f) => { if (fields.indexOf(f) === -1) fields.push(f); }));
       const headers = headerRow(sheet, fields);
       rows.forEach((row) => sheet.appendRow(headers.map((h) => cell(h, row[h]))));
+      sheet.setRowHeightsForced(sheet.getLastRow() - rows.length + 1, rows.length, ROW_HEIGHT);
     } else if (!updateRow(tab(body.tab), update.generation, update.set)) {
       return reply({ ok: false, error: 'not-found' });
     }
