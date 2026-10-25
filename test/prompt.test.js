@@ -14,9 +14,15 @@ test('the default prompt asks for 75% real child, 25% cover style', () => {
 });
 
 test('the default prompt takes pose and expression from the cover, not the photo', () => {
-  assert.match(DEFAULT_PREVIEW_PROMPT, /in the original character's exact pose, head angle, gaze and expression/);
-  assert.match(DEFAULT_PREVIEW_PROMPT, /Never copy the photo's straight-on pose or its expression/);
+  assert.match(DEFAULT_PREVIEW_PROMPT, /in the original hero's exact pose, head angle, gaze, expression and outfit/);
+  assert.match(DEFAULT_PREVIEW_PROMPT, /EXPRESSION COMES FROM THE COVER, NEVER FROM THE PHOTO/);
+  assert.match(DEFAULT_PREVIEW_PROMPT, /even if the photo is neutral, serious, sleepy, surprised or open-mouthed/);
   assert.doesNotMatch(DEFAULT_PREVIEW_PROMPT, /which teeth show/);
+});
+
+test('the default prompt keeps the hero\'s headwear and everyone else\'s faces', () => {
+  assert.match(DEFAULT_PREVIEW_PROMPT, /If the hero wears a helmet, hat, crown or hood, the child wears that same one/);
+  assert.match(DEFAULT_PREVIEW_PROMPT, /Never give anyone else the child's face, hair or age/);
 });
 
 test('appends the language, the name with its no-leftover-letters rule, and the age', () => {
