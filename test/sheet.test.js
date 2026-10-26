@@ -87,6 +87,7 @@ test('a Book previews row carries the answers, the prompt and the outcome', () =
     Age: 5,
     Language: 'French',
     Occasion: '',
+    'Extra details': '',
     'Added to cart': '',
     Photo: PHOTO,
     Cover: COVER,
@@ -127,6 +128,7 @@ test('a Custom stories row names the world, hero, idea and reference book', () =
     Age: 6,
     Occasion: 'A birthday',
     'Story idea': 'Lina fixes a robot on the moon.',
+    'Extra details': '',
     'Reference book': 'girl-astronaut',
     'Added to cart': '',
     Photo: PHOTO,
@@ -228,7 +230,7 @@ test('a Daily row has the funnel, revenue and top lists', () => {
 
 test('preview page follow-ups become sheet fields', () => {
   assert.deepEqual(previewFollowUp({ action: 'occasion', generation_id: 'k3x9p2m7q1', occasion: 'A birthday' }),
-    { value: { generationId: 'k3x9p2m7q1', fields: { Occasion: 'A birthday' } } });
+    { value: { generationId: 'k3x9p2m7q1', details: '', variant: '', fields: { Occasion: 'A birthday' } } });
   assert.deepEqual(previewFollowUp({ action: 'occasion', generation_id: 'k3x9p2m7q1', occasion: '' }).value.fields,
     { Occasion: '' }, 'clearing the chip clears the cell');
   assert.deepEqual(previewFollowUp({ action: 'cart', generation_id: 'k3x9p2m7q1', occasion: 'A new baby', variant: 'Hardcover' }).value.fields,
@@ -236,6 +238,18 @@ test('preview page follow-ups become sheet fields', () => {
   assert.deepEqual(previewFollowUp({ action: 'cart', generation_id: 'k3x9p2m7q1', variant: 'Softcover' }).value.fields,
     { 'Added to cart': 'Softcover' }, 'a cart without an occasion leaves the answer alone');
   assert.deepEqual(previewFollowUp({ action: 'cart', generation_id: 'k3x9p2m7q1' }).value.fields, { 'Added to cart': 'Yes' });
+});
+
+test('extra details become a one-line sheet field', () => {
+  assert.deepEqual(previewFollowUp({ action: 'details', generation_id: 'k3x9p2m7q1', details: '  Loves dinosaurs,\n a dog called Biscuit ' }).value.fields,
+    { 'Extra details': 'Loves dinosaurs, a dog called Biscuit' });
+  assert.deepEqual(previewFollowUp({ action: 'details', generation_id: 'k3x9p2m7q1', details: '' }).value.fields,
+    { 'Extra details': '' }, 'emptying the field clears the cell');
+  const cart = previewFollowUp({ action: 'cart', generation_id: 'k3x9p2m7q1', details: 'Has a big sister', variant: 'Hardcover' }).value;
+  assert.deepEqual(cart.fields, { 'Extra details': 'Has a big sister', 'Added to cart': 'Hardcover' });
+  assert.equal(cart.details, 'Has a big sister', 'kept for the #previews card');
+  assert.equal(cart.variant, 'Hardcover');
+  assert.equal(previewFollowUp({ action: 'details', generation_id: 'k3x9p2m7q1', details: 'x'.repeat(500) }).value.fields['Extra details'].length, 400);
 });
 
 test('follow-ups with anything off the list are refused', () => {

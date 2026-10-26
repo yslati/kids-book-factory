@@ -51,7 +51,9 @@ test('rejects what the page never sends', () => {
 
 test('the cart follow-up needs a generation id', () => {
   assert.deepEqual(normaliseCart({ generation_id: 'k3x9p2m7q1', variant: 'Hardcover', price: '$44.99' }).value,
-    { generationId: 'k3x9p2m7q1', variant: 'Hardcover', price: '$44.99' });
+    { generationId: 'k3x9p2m7q1', variant: 'Hardcover', price: '$44.99', details: '' });
+  assert.deepEqual(normaliseCart({ generation_id: 'k3x9p2m7q1', details: 'Has a cat,\nMilo' }).value,
+    { generationId: 'k3x9p2m7q1', variant: '', price: '', details: 'Has a cat, Milo' });
   assert.equal(normaliseCart({ generation_id: '' }).error, 'bad-generation-id');
 });
 
@@ -84,4 +86,16 @@ test('keeps the record for 30 days and claims the cart card once', async () => {
 test('without Redis there is no record, and the claim is allowed', async () => {
   assert.equal(await readCustomStory(null, 'k3x9p2m7q1'), null);
   assert.equal(await claimCartPost(null, 'k3x9p2m7q1'), true);
+});
+
+test('a product-page cover keeps its record 30 days and claims the details card once', async () => {
+  const { claimDetailsPost, readPreviewRecord, savePreviewRecord } = await import('../lib/preview-record.js');
+  const redis = memoryRedis();
+  await savePreviewRecord(redis, 'k3x9p2m7q1', { childName: 'Emma' });
+  assert.deepEqual(await readPreviewRecord(redis, 'k3x9p2m7q1'), { childName: 'Emma' });
+  assert.equal(redis.store.get('kbf:preview:k3x9p2m7q1').opts.ex, 30 * 86400);
+  assert.equal(await readPreviewRecord(redis, 'unknown'), null);
+  assert.equal(await claimDetailsPost(redis, 'k3x9p2m7q1'), true);
+  assert.equal(await claimDetailsPost(redis, 'k3x9p2m7q1'), false);
+  assert.equal(await readPreviewRecord(null, 'k3x9p2m7q1'), null);
 });
