@@ -249,7 +249,8 @@ async function handler(req, res) {
     if (customer.valid) {
       try {
         await savePreviews(customer.customerId, [{
-          k: generationId,
+          // The key the theme stores this preview under, so the two merge.
+          k: 'kb-book-' + generationId,
           // The product handle. The display slug that goes in ?b= is built in
           // the theme, so the client fills `book` in when it syncs.
           themeId: themeId,
