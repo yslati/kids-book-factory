@@ -2,7 +2,8 @@
 // Storefront analytics from the Shopify custom pixel (pixel/custom-pixel.js):
 // page, product and collection views, searches, cart and checkout steps, and
 // orders. Counts them for the daily summary (lib/event-stats.js), posts
-// visits, add-to-carts, checkouts and orders to #events (lib/event-feed.js)
+// visits to #visits and add-to-carts, checkouts and orders to #events
+// (lib/event-feed.js)
 // and adds them to the requests sheet (lib/sheet.js).
 //
 // Body: text/plain JSON, shaped as lib/storefront-events.js describes → 204,
