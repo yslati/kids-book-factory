@@ -3,7 +3,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { announcePreview } from '../lib/preview-feed.js';
+import { announcePreview, postPreviewDetails } from '../lib/preview-feed.js';
 import { resetDiscordThrottle, setDiscordOutbox } from '../lib/discord.js';
 
 const WEBHOOK = 'https://discord.com/api/webhooks/2/previews-token';
@@ -224,4 +224,33 @@ test('without a count, the cards go out without the field', async (t) => {
   await announcePreview(req, preview()).done({ coverUrl: COVER });
   assert.equal(posts(calls).length, 6);
   assert.ok(posts(calls).every((e) => countOf(e) === undefined));
+});
+
+test('the add-to-cart card carries the extra details, linked to the photo', async (t) => {
+  withWebhook(t, WEBHOOK);
+  const calls = stubDiscord(t);
+  const link = 'https://discord.com/channels/999/222/111';
+  await postPreviewDetails(req, { childName: 'Emma', age: '5', bookTitle: 'The Winning Goal', coverUrl: COVER, link },
+    { generationId: 'k3x9p2m7q1', variant: 'Hardcover', details: 'Has a dog, **Biscuit** @everyone' });
+  const [card] = posts(calls);
+  assert.equal(card.title, '🛒 Emma, 5 · The Winning Goal');
+  assert.equal(card.url, link);
+  assert.deepEqual(card.thumbnail, { url: COVER });
+  assert.deepEqual(fieldsOf(card), { Cover: 'Hardcover', 'Extra details': 'Has a dog, Biscuit everyone', Generation: '`k3x9p2m7q1`' });
+});
+
+test('no details card while the channel has no webhook', async (t) => {
+  withWebhook(t, undefined);
+  const calls = stubDiscord(t);
+  assert.equal(await postPreviewDetails(req, { childName: 'Emma' }, { generationId: 'k3x9p2m7q1', details: 'x' }), null);
+  assert.equal(calls.length, 0);
+});
+
+test('the feed hands out the photo message link for the record', async (t) => {
+  withWebhook(t, WEBHOOK);
+  stubDiscord(t);
+  const feed = announcePreview(req, preview());
+  assert.equal(await feed.link, 'https://discord.com/channels/999/222/111');
+  withWebhook(t, undefined);
+  assert.equal(announcePreview(req, preview()).link, null, 'no channel, no link');
 });

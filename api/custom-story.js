@@ -10,7 +10,7 @@
 //   token_date?, customer_token? }
 //   → { preview_url, generation_id, status: 'ready' }
 //   429 → { error: 'rate-limited', login_required, remaining: 0 }
-// Cart body: { action: 'cart', generation_id, variant, price } → 204
+// Cart body: { action: 'cart', generation_id, variant, price, details? } → 204
 //
 // Generate flow:
 //   1. Verify origin + the one-time pass from /upload-url (else Turnstile) +
@@ -80,7 +80,9 @@ async function cart(req, res, body) {
   const record = await readCustomStory(redis, value.generationId);
   if (!record) return res.status(404).json({ error: 'unknown-generation' });
   res.status(204).end();
-  waitUntil(updateRow(TABS.custom, value.generationId, { 'Added to cart': value.variant || 'Yes' }));
+  const fields = { 'Added to cart': value.variant || 'Yes' };
+  if (value.details) fields['Extra details'] = value.details;
+  waitUntil(updateRow(TABS.custom, value.generationId, fields));
   if (await claimCartPost(redis, value.generationId)) waitUntil(postCustomCart(req, record, value));
 }
 

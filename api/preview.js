@@ -10,7 +10,9 @@
 // rather than in their own function since Vercel's Hobby plan caps a
 // deployment at 12:
 //   { action: 'occasion', generation_id, occasion }            → 204
-//   { action: 'cart', generation_id, occasion?, variant }      → 204
+//   { action: 'details', generation_id, details }              → 204
+//   { action: 'cart', generation_id, occasion?, details?,
+//     variant }                                                → 204
 //
 // Flow:
 //   1. Verify origin + the one-time preview pass from /upload-url (else a
@@ -44,8 +46,9 @@ import { savePreviews } from '../lib/user-previews.js';
 import { previewKey } from '../lib/object-names.js';
 import { coverForStorage } from '../lib/cover-image.js';
 import { withReporting } from '../lib/report.js';
-import { announcePreview } from '../lib/preview-feed.js';
+import { announcePreview, postPreviewDetails } from '../lib/preview-feed.js';
 import { appendRows, previewFollowUp, previewRow, TABS, updateRow } from '../lib/sheet.js';
+import { claimDetailsPost, readPreviewRecord, savePreviewRecord } from '../lib/preview-record.js';
 import { countPreview } from '../lib/visitor-counts.js';
 import { countEvent } from '../lib/event-stats.js';
 import { waitUntil } from '@vercel/functions';
@@ -72,6 +75,20 @@ async function followUp(req, res, body) {
   if (!limited.success) return res.status(429).json({ error: 'rate-limited' });
   res.status(204).end();
   waitUntil(updateRow(TABS.previews, value.generationId, value.fields));
+  if (body.action === 'cart' && value.details) waitUntil(postDetails(req, value));
+}
+
+// The extra details card in #previews: only for a cover this backend made,
+// and only once per generation.
+async function postDetails(req, value) {
+  try {
+    const redis = getRedis();
+    const record = await readPreviewRecord(redis, value.generationId);
+    if (!record || !(await claimDetailsPost(redis, value.generationId))) return;
+    await postPreviewDetails(req, record, value);
+  } catch (e) {
+    console.warn('[preview] details card not posted:', (e && e.message) || e);
+  }
 }
 
 async function handler(req, res) {
@@ -245,6 +262,14 @@ async function handler(req, res) {
       } catch (e) { /* never surfaces */ }
     }
 
+    // The extra details card reads this; a Redis problem must never fail a paid cover.
+    if (feed.link) {
+      waitUntil(feed.link
+        .then((link) => savePreviewRecord(getRedis(), generationId, {
+          childName, age: ageText, bookTitle: book.title || '', coverUrl: previewUrl, link
+        }))
+        .catch((e) => console.warn('[preview] record not saved:', (e && e.message) || e)));
+    }
     feed.done({ coverUrl: previewUrl, bookTitle: book.title, attempt: generated.attempt, temporary: previewUrl === generatedUrl });
     record({ coverUrl: previewUrl, bookTitle: book.title, attempt: generated.attempt, prompt });
     waitUntil(countEvent(getRedis(), 'preview_ready'));

@@ -134,3 +134,15 @@ test('the add-to-cart card shows the cover option and price', async (t) => {
   assert.deepEqual(card.thumbnail, { url: COVER });
   assert.deepEqual(fieldsOf(card), { Cover: 'Hardcover', Price: '$44.99', Generation: '`k3x9p2m7q1`' });
 });
+
+test('the add-to-cart card shows the extra details when there are some', async (t) => {
+  withWebhook(t, WEBHOOK);
+  const calls = stubDiscord(t);
+  await postCustomCart(req, { childName: 'Lina' }, {
+    generationId: 'k3x9p2m7q1', variant: 'Softcover', price: '$29.99', details: 'Has a dog, Biscuit'
+  });
+  const [card] = posts(calls);
+  assert.deepEqual(fieldsOf(card), {
+    Cover: 'Softcover', Price: '$29.99', 'Extra details': 'Has a dog, Biscuit', Generation: '`k3x9p2m7q1`'
+  });
+});
