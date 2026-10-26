@@ -1,4 +1,4 @@
-// #events live posts and the daily summary, with Discord stubbed.
+// #visits and #events live posts and the daily summary, with Discord stubbed.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -6,22 +6,27 @@ import { postLiveEvent, postSummary, summaryEmbed } from '../lib/event-feed.js';
 import { resetDiscordThrottle, setDiscordOutbox } from '../lib/discord.js';
 
 const WEBHOOK = 'https://discord.com/api/webhooks/3/events-token';
+const VISITS_WEBHOOK = 'https://discord.com/api/webhooks/4/visits-token';
 
 function stubDiscord(t) {
   const saved = process.env.DISCORD_WEBHOOK_EVENTS;
+  const savedVisits = process.env.DISCORD_WEBHOOK_VISITS;
   process.env.DISCORD_WEBHOOK_EVENTS = WEBHOOK;
+  process.env.DISCORD_WEBHOOK_VISITS = VISITS_WEBHOOK;
   resetDiscordThrottle();
   setDiscordOutbox(null);
   const original = globalThis.fetch;
   const posts = [];
   globalThis.fetch = async (url, init = {}) => {
-    posts.push(JSON.parse(init.body).embeds[0]);
+    posts.push({ ...JSON.parse(init.body).embeds[0], webhook: String(url) });
     return new Response(null, { status: 204 });
   };
   t.after(() => {
     globalThis.fetch = original;
     if (saved === undefined) delete process.env.DISCORD_WEBHOOK_EVENTS;
     else process.env.DISCORD_WEBHOOK_EVENTS = saved;
+    if (savedVisits === undefined) delete process.env.DISCORD_WEBHOOK_VISITS;
+    else process.env.DISCORD_WEBHOOK_VISITS = savedVisits;
     resetDiscordThrottle();
   });
   return posts;
@@ -34,7 +39,7 @@ const visitor = {
 };
 const fieldsOf = (embed) => Object.fromEntries(embed.fields.map((f) => [f.name, f.value]));
 
-test('a page view that starts a visit posts the visit; other views only count', async (t) => {
+test('a page view that starts a visit posts the visit to #visits; other views only count', async (t) => {
   const posts = stubDiscord(t);
   const page = { name: 'page_viewed', clientId: 'c1', path: '/products/the-winning-goal', params: {}, referrer: '' };
   await postLiveEvent(page, { visit: 3, source: { label: 'instagram / paid', campaign: 'spring · reel-2' } }, visitor);
@@ -42,6 +47,7 @@ test('a page view that starts a visit posts the visit; other views only count', 
   await postLiveEvent({ ...page, name: 'product_viewed' }, { visit: null, source: null }, visitor);
 
   assert.equal(posts.length, 1);
+  assert.equal(posts[0].webhook, VISITS_WEBHOOK);
   assert.equal(posts[0].title, '🆕 instagram / paid');
   const f = fieldsOf(posts[0]);
   assert.equal(f.Count, '3rd visit from this browser');
@@ -49,6 +55,16 @@ test('a page view that starts a visit posts the visit; other views only count', 
   assert.equal(f.Campaign, '`spring · reel-2`');
   assert.equal(f.Device, 'iPhone · iOS 17.6 · Instagram 389\n`fr-FR`');
   assert.equal(f.Origin, undefined, 'the pixel\'s origin says nothing');
+});
+
+test('visits are off without a #visits webhook; #events still posts', async (t) => {
+  const posts = stubDiscord(t);
+  delete process.env.DISCORD_WEBHOOK_VISITS;
+  const page = { name: 'page_viewed', clientId: 'c1', path: '/', params: {}, referrer: '' };
+  assert.equal(await postLiveEvent(page, { visit: 1, source: { label: 'direct', campaign: '' } }, visitor), null);
+  await postLiveEvent({ ...page, name: 'product_added_to_cart', product: { title: 'Lina', quantity: 1 } }, { visit: null, source: null }, visitor);
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].webhook, WEBHOOK);
 });
 
 test('add-to-cart, checkout and order cards', async (t) => {
@@ -59,6 +75,7 @@ test('add-to-cart, checkout and order cards', async (t) => {
   await postLiveEvent({ name: 'checkout_started', clientId: 'c1', path: '/checkouts/:id', params: {}, referrer: '', checkout: { ...checkout, orderId: '' } }, { visit: null, source }, visitor);
   await postLiveEvent({ name: 'checkout_completed', clientId: 'c1', path: '/checkouts/:id/thank-you', params: {}, referrer: '', checkout }, null, visitor);
 
+  assert.ok(posts.every((p) => p.webhook === WEBHOOK), 'carts, checkouts and orders stay in #events');
   assert.equal(posts[0].title, '🛒 The Winning Goal · €34.99');
   assert.equal(fieldsOf(posts[0]).Source, '`tiktok ads`');
   assert.equal(posts[1].title, '💳 Checkout · €59.98 · 2 items');
