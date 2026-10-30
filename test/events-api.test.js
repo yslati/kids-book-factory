@@ -22,6 +22,9 @@ test('events: accepted with 204, junk refused, wrong method refused', async () =
   await events(req(page), r);
   assert.equal(r.statusCode, 204);
   r = res();
+  await events(req(JSON.stringify({ event: 'checkout_completed', clientId: '', path: '/checkouts/x/thank-you' })), r);
+  assert.equal(r.statusCode, 204, 'no client id: a visitor without analytics consent');
+  r = res();
   await events(req('{"event":"nope"}'), r);
   assert.equal(r.statusCode, 400);
   r = res();

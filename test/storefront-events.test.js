@@ -6,11 +6,18 @@ import fs from 'node:fs';
 import { normaliseEvent, pagePath } from '../lib/storefront-events.js';
 import { SOURCE_PARAMS } from '../lib/traffic-source.js';
 
-test('rejects unknown events and events without a client id', () => {
+test('rejects unknown events', () => {
   assert.equal(normaliseEvent(null), null);
   assert.equal(normaliseEvent([]), null);
-  assert.equal(normaliseEvent({ event: 'page_viewed' }), null);
   assert.equal(normaliseEvent({ event: 'checkout_hacked', clientId: 'c1' }), null);
+});
+
+test('keeps events without a client id (no analytics consent), marked as such', () => {
+  assert.deepEqual(normaliseEvent({ event: 'page_viewed', clientId: '', path: '/' }), {
+    name: 'page_viewed', clientId: '', consented: false, path: '/', params: {}, referrer: ''
+  });
+  assert.equal(normaliseEvent({ event: 'checkout_completed' }).consented, false);
+  assert.equal(normaliseEvent({ event: 'page_viewed', clientId: 'c1' }).consented, true);
 });
 
 test('keeps campaign tags only, and the referrer\'s origin', () => {
@@ -24,6 +31,7 @@ test('keeps campaign tags only, and the referrer\'s origin', () => {
   assert.deepEqual(e, {
     name: 'page_viewed',
     clientId: 'c1',
+    consented: true,
     path: '/pages/create-your-book',
     params: { utm_source: 'instagram', gclid: 'x'.repeat(100) },
     referrer: 'https://www.booktokids.com'

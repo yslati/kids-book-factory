@@ -57,6 +57,16 @@ test('a page view that starts a visit posts the visit to #visits; other views on
   assert.equal(f.Origin, undefined, 'the pixel\'s origin says nothing');
 });
 
+test('a visit without cookie consent shows no visit count and no IP', async (t) => {
+  const posts = stubDiscord(t);
+  const page = { name: 'page_viewed', clientId: 'anon:x', consented: false, path: '/', params: {}, referrer: '' };
+  await postLiveEvent(page, { visit: 2, source: { label: 'direct', campaign: '' } }, visitor);
+  const f = fieldsOf(posts[0]);
+  assert.equal(f.Count, 'No cookie consent, counted without cookies');
+  assert.equal(f.IP, undefined);
+  assert.ok(f.Visitor && f.Device);
+});
+
 test('visits are off without a #visits webhook; #events still posts', async (t) => {
   const posts = stubDiscord(t);
   delete process.env.DISCORD_WEBHOOK_VISITS;

@@ -2,7 +2,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { countEvent, dayOf, readDay, recordEvent } from '../lib/event-stats.js';
+import { cookielessId, countEvent, dayOf, readDay, recordEvent } from '../lib/event-stats.js';
 
 function fakeRedis({ fail = false } = {}) {
   const strings = new Map();
@@ -109,4 +109,22 @@ test('without Redis, or when it fails, nothing throws', async () => {
   assert.equal(await recordEvent(fakeRedis({ fail: true }), page('c6', '/')), null);
   await countEvent(fakeRedis({ fail: true }), 'preview_started');
   await countEvent(null, 'preview_started');
+});
+
+test('cookieless ids: same IP and browser match within the day, others differ', async () => {
+  const redis = fakeRedis();
+  const a = await cookielessId(redis, { ip: '203.0.113.7', userAgent: 'Safari' });
+  assert.match(a, /^anon:[0-9a-f]{32}$/);
+  assert.equal(await cookielessId(redis, { ip: '203.0.113.7', userAgent: 'Safari' }), a);
+  assert.notEqual(await cookielessId(redis, { ip: '203.0.113.8', userAgent: 'Safari' }), a);
+  assert.notEqual(await cookielessId(redis, { ip: '203.0.113.7', userAgent: 'Chrome' }), a);
+  assert.ok(!a.includes('203.0.113.7'));
+  assert.equal(await cookielessId(null, { ip: '203.0.113.7' }), '');
+});
+
+test('a visit without cookie consent is counted as one', async () => {
+  const redis = fakeRedis();
+  await recordEvent(redis, page('anon:1', '/', { consented: false }));
+  await recordEvent(redis, page('c9', '/', { consented: true }));
+  assert.deepEqual(redis.hashes.get(key('count')), { page_viewed: 2, visits: 2, cookieless_visits: 1 });
 });
