@@ -150,11 +150,21 @@ test('a new visit goes to Visits with its source and landing page', () => {
   );
   assert.equal(out.tab, TABS.visits);
   assert.deepEqual(without(out.rows[0], 'Date'), {
-    Source: 'instagram', Campaign: 'autumn', 'Landing page': '/products/the-winning-goal', 'Visit number': 2, ...PLACE
+    Source: 'instagram', Campaign: 'autumn', 'Landing page': '/products/the-winning-goal', 'Visit number': 2, 'Cookie consent': 'Yes', ...PLACE
   });
   assert.equal(storefrontRows({ name: 'page_viewed', path: '/' }, { visit: null, source: null }, visitor), null, 'later pages of a visit');
   assert.equal(storefrontRows({ name: 'page_viewed', path: '/' }, null, visitor), null, 'no Redis, no visit');
   assert.equal(storefrontRows({ name: 'product_viewed', product: {} }, null, visitor), null, 'views are only counted');
+});
+
+test('a visit without cookie consent has no visit number', () => {
+  const out = storefrontRows(
+    { name: 'page_viewed', path: '/', consented: false },
+    { visit: 1, source: { label: 'direct', campaign: '' } },
+    visitor
+  );
+  assert.equal(out.rows[0]['Visit number'], '');
+  assert.equal(out.rows[0]['Cookie consent'], 'No');
 });
 
 test('an add to cart goes to Carts', () => {
@@ -217,7 +227,7 @@ test('a Daily row has the funnel, revenue and top lists', () => {
     orderSources: { google: 2 }
   });
   assert.deepEqual(row, {
-    Day: '2026-10-24', Visitors: 120, Visits: 150, 'Page views': 600, 'Product views': 200, 'Collection views': 0,
+    Day: '2026-10-24', Visitors: 120, Visits: 150, 'Visits without cookie consent': 0, 'Page views': 600, 'Product views': 200, 'Collection views': 0,
     Searches: 0, 'Cart views': 0, 'Previews started': 12, 'Previews ready': 11, 'Previews failed': 1,
     'Added to cart': 4, 'Checkouts started': 3, Orders: 2, Revenue: 89.98, Currency: 'USD',
     'Top sources': 'google (80), direct (70)', 'Orders by source': 'google (2)',

@@ -1,10 +1,11 @@
 // POST /api/events
 // Storefront analytics from the Shopify custom pixel (pixel/custom-pixel.js):
 // page, product and collection views, searches, cart and checkout steps, and
-// orders. Counts them for the daily summary (lib/event-stats.js), posts
-// visits to #visits and add-to-carts, checkouts and orders to #events
-// (lib/event-feed.js)
-// and adds them to the requests sheet (lib/sheet.js).
+// orders, from every visitor: those without analytics consent come without a
+// client id and get a cookieless one. Counts them for the daily summary
+// (lib/event-stats.js), posts visits to #visits and add-to-carts, checkouts
+// and orders to #events (lib/event-feed.js) and adds them to the requests
+// sheet (lib/sheet.js).
 //
 // Body: text/plain JSON, shaped as lib/storefront-events.js describes → 204,
 // sent before any counting or posting, which run after the response.
@@ -18,7 +19,7 @@ import { applyCors } from '../lib/cors.js';
 import { getRedis } from '../lib/redis.js';
 import { visitorOf } from '../lib/discord.js';
 import { normaliseEvent } from '../lib/storefront-events.js';
-import { recordEvent } from '../lib/event-stats.js';
+import { cookielessId, recordEvent } from '../lib/event-stats.js';
 import { postLiveEvent } from '../lib/event-feed.js';
 import { appendRows, storefrontRows } from '../lib/sheet.js';
 
@@ -48,7 +49,9 @@ function overLimit(ip) {
 
 async function record(event, visitor) {
   try {
-    const recorded = await recordEvent(getRedis(), event, { country: visitor.country, ownHosts: OWN_HOSTS });
+    const redis = getRedis();
+    if (!event.consented) event.clientId = await cookielessId(redis, visitor);
+    const recorded = event.clientId ? await recordEvent(redis, event, { country: visitor.country, ownHosts: OWN_HOSTS }) : null;
     const sheet = storefrontRows(event, recorded, visitor);
     await Promise.all([
       postLiveEvent(event, recorded, visitor),
