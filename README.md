@@ -70,6 +70,7 @@ If `PREVIEW_TOKEN_SECRET` is unset the feature is simply off: every token is tre
 - `POST /api/custom-story` - a cover for a story the catalog doesn't have (see [Custom stories](#custom-stories)), and its add-to-cart follow-up.
 - `POST /api/log` - storefront error reports, forwarded to Discord's #logs (see [Discord channels](#discord-channels)).
 - `POST /api/events` - storefront analytics from the Shopify custom pixel, for #events.
+- `POST /api/shopify-webhook` - Shopify's "Order creation" webhook: every order, for #events, the Orders tab and the daily totals.
 - `GET /api/cron/daily-summary` - Vercel cron, posts yesterday's totals to #events, plus any days a skipped run missed.
 - `GET /api/cron/higgsfield` - Vercel cron, posts the daily Higgsfield account check to #higgsfield.
 
@@ -116,6 +117,7 @@ A Shopify **custom pixel** (`pixel/custom-pixel.js`) sends the storefront's even
 - **Visitors without consent:** identified by a hash of their IP and user agent with a random salt that changes each UTC day (`kbf:ev:salt:<day>`, deleted after 2 days). Nothing is stored on their device and the hash can't be traced back once the salt is gone; the trade-off is that their visits can't be linked across days, and people sharing an IP and browser count as one. The daily summary and the Daily tab show how many visits came without consent.
 - **Storage:** per UTC day in Upstash (`kbf:ev:<day>:*`, kept 40 days; unique visitors by Shopify client id or cookieless id), costing about 5 commands per page view and 10 per new visit, and one function invocation per event.
 - **Privacy:** only paths (query strings and checkout tokens removed), campaign tags, product titles, prices and quantities are stored or posted: never customer details or line item properties, which carry the child's name. Visitors without consent get no cookie or other device storage, only the daily cookieless id above: the approach cookieless analytics tools use without a consent banner under EU privacy law (GDPR, ePrivacy).
+- **Orders from Shopify:** the pixel's order event fires only if the thank-you page loads and nothing blocks the pixel, and anyone can fake one. So orders come from a store webhook instead (`api/shopify-webhook.js`, `lib/shopify-order.js`), sent by Shopify's servers for every order. Set it up in Shopify admin → Settings → Notifications → Webhooks → Create webhook: event "Order creation", format JSON, URL `https://kids-book-factory.vercel.app/shopify-webhook`, the latest API version. Copy the key the page says webhooks are signed with into Vercel as `SHOPIFY_WEBHOOK_SECRET` (production, sensitive) and redeploy. While it's set, the pixel's `checkout_completed` is ignored; without it, the pixel's orders are used as before. Requests whose signature doesn't match get `401`; test orders, and repeat deliveries of the same order (`kbf:ev:order:<id>`, 40 days), are left out. Order cards and rows show the order's name (`#btk-1009`), the source of the visit that ordered (Shopify's landing page and referrer), the shipping country and the browser, and never names, contacts, addresses or line item properties.
 - **Trust:** the pixel's requests can't be authenticated, so anyone could post fake events. Payloads are validated and each IP is capped at 300 events per 10 minutes per instance; Shopify's orders are the source of truth for revenue.
 
 ### #custom-generation: custom story requests
@@ -145,7 +147,7 @@ Everything the backend sees also goes to a Google Sheet, one tab per kind, so it
 | --- | --- | --- | --- |
 | Book previews | product-page cover | `/api/preview` | Date, Status, Book, Child's name, Age, Language, Occasion, Extra details, Added to cart, Photo, Cover, Model, Seconds, Customer, Country, City, Device, Error, Generation, Prompt |
 | Custom stories | custom story cover | `/api/custom-story` | Date, Status, World, Hero, Child's name, Age, Occasion, Story idea, Extra details, Reference book, Added to cart, Photo, Cover, Model, Seconds, Customer, Country, City, Device, Error, Generation, Prompt |
-| Orders | book in an order | the pixel's `checkout_completed` (`/api/events`) | Date, Order, Book, Cover, Quantity, Price, Order total, Currency, Discount codes, Customer (first order or returning), Source, Country, City, Device |
+| Orders | book in an order | Shopify's order webhook (`/api/shopify-webhook`), else the pixel's `checkout_completed` | Date, Order, Book, Cover, Quantity, Price, Order total, Currency, Discount codes, Customer (first order or returning), Source, Country, City (pixel only), Device |
 | Carts | add to cart | the pixel | Date, Book, Variant, Quantity, Price, Currency, Source, Country, City, Device |
 | Checkouts | checkout started | the pixel | Date, Total, Currency, Items, Discount codes, Source, Country, City, Device |
 | Visits | new visit | the pixel's first page view of a visit | Date, Source, Campaign, Landing page, Visit number (empty without consent), Country, City, Device, Cookie consent |
@@ -182,7 +184,7 @@ npx vercel dev         # local, http://localhost:3000
 npx vercel deploy --prod
 ```
 
-Env (see `.env.example`): `HIGGSFIELD_KEY` (the fal keys are commented out while fal is off), `R2_*` (+ public bucket URL), `SHOPIFY_SHOP` + `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET` (scopes `read_products`, `write_customers`), `TURNSTILE_SECRET`, `UPSTASH_*`, `PREVIEW_TOKEN_SECRET`, `ALLOWED_ORIGIN`, `DISCORD_WEBHOOK_*`, optionally `SHEET_WEBHOOK_URL` + `SHEET_WEBHOOK_SECRET` for the [requests sheet](#requests-sheet), and optionally `SHARE_BASE_URL` + `STORE_URL` for short share links (`api/share.js`, served on `s.booktokids.com`). The backend obtains and refreshes Shopify's short-lived Admin API token automatically. Add the same values in the Vercel project, then put the deployed URL in the theme section's **Backend URL** setting.
+Env (see `.env.example`): `HIGGSFIELD_KEY` (the fal keys are commented out while fal is off), `R2_*` (+ public bucket URL), `SHOPIFY_SHOP` + `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET` (scopes `read_products`, `write_customers`), `TURNSTILE_SECRET`, `UPSTASH_*`, `PREVIEW_TOKEN_SECRET`, `ALLOWED_ORIGIN`, `DISCORD_WEBHOOK_*`, optionally `SHEET_WEBHOOK_URL` + `SHEET_WEBHOOK_SECRET` for the [requests sheet](#requests-sheet), optionally `SHOPIFY_WEBHOOK_SECRET` for orders from Shopify's order webhook (see [#events](#events-visitors-funnel-and-orders)), and optionally `SHARE_BASE_URL` + `STORE_URL` for short share links (`api/share.js`, served on `s.booktokids.com`). The backend obtains and refreshes Shopify's short-lived Admin API token automatically. Add the same values in the Vercel project, then put the deployed URL in the theme section's **Backend URL** setting.
 
 Smoke test:
 ```bash

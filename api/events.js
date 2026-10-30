@@ -15,23 +15,21 @@
 // withReporting, so junk requests can't flood #logs.
 
 import { waitUntil } from '@vercel/functions';
-import { applyCors } from '../lib/cors.js';
+import { allowedHosts, applyCors } from '../lib/cors.js';
 import { getRedis } from '../lib/redis.js';
 import { visitorOf } from '../lib/discord.js';
 import { normaliseEvent } from '../lib/storefront-events.js';
 import { cookielessId, recordEvent } from '../lib/event-stats.js';
 import { postLiveEvent } from '../lib/event-feed.js';
 import { appendRows, storefrontRows } from '../lib/sheet.js';
+import { orderWebhookOn } from '../lib/shopify-order.js';
 
 // A visitor sends a few events per page; this only stops a flood.
 const LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const LIMIT_EVENTS = 300;
 const recent = new Map();
 
-// The storefront's own domains, whose referrals aren't a traffic source.
-const OWN_HOSTS = (process.env.ALLOWED_ORIGIN || '').split(',').map((origin) => {
-  try { return new URL(origin.trim()).hostname; } catch (e) { return ''; }
-}).filter(Boolean);
+const OWN_HOSTS = allowedHosts();
 
 function overLimit(ip) {
   const now = Date.now();
@@ -48,6 +46,9 @@ function overLimit(ip) {
 }
 
 async function record(event, visitor) {
+  // Shopify's order webhook (api/shopify-webhook.js) reports every order,
+  // signed; the pixel's can be missed or faked.
+  if (event.name === 'checkout_completed' && orderWebhookOn()) return;
   try {
     const redis = getRedis();
     if (!event.consented) event.clientId = await cookielessId(redis, visitor);

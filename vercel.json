@@ -19,6 +19,9 @@
     "api/events.js": {
       "maxDuration": 30
     },
+    "api/shopify-webhook.js": {
+      "maxDuration": 30
+    },
     "api/cron/daily-summary.js": {
       "maxDuration": 30
     },
@@ -78,6 +81,10 @@
     {
       "source": "/events",
       "destination": "/api/events"
+    },
+    {
+      "source": "/shopify-webhook",
+      "destination": "/api/shopify-webhook"
     }
   ],
   "crons": [

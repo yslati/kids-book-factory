@@ -2,7 +2,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cookielessId, countEvent, dayOf, readDay, recordEvent } from '../lib/event-stats.js';
+import { cookielessId, countEvent, dayOf, readDay, recordEvent, recordOrder } from '../lib/event-stats.js';
 
 function fakeRedis({ fail = false } = {}) {
   const strings = new Map();
@@ -127,4 +127,17 @@ test('a visit without cookie consent is counted as one', async () => {
   await recordEvent(redis, page('anon:1', '/', { consented: false }));
   await recordEvent(redis, page('c9', '/', { consented: true }));
   assert.deepEqual(redis.hashes.get(key('count')), { page_viewed: 2, visits: 2, cookieless_visits: 1 });
+});
+
+test('a webhook order counts once, with its source and revenue', async () => {
+  const redis = fakeRedis();
+  const order = { name: 'checkout_completed', checkout: { total: { amount: 50.18, currency: 'USD' }, items: [], discounts: [] } };
+  assert.equal(await recordOrder(redis, '681', order, { label: 'google / product_sync', campaign: '' }), true);
+  assert.equal(await recordOrder(redis, '681', order, { label: 'google / product_sync', campaign: '' }), false, 'a repeat delivery');
+  assert.deepEqual(redis.hashes.get(key('count')), { checkout_completed: 1 });
+  assert.deepEqual(redis.hashes.get(key('order-sources')), { 'google / product_sync': 1 });
+  assert.deepEqual(redis.hashes.get(key('revenue')), { USD: 50.18 });
+  assert.equal(redis.ttls.get('kbf:ev:order:681'), 40 * 24 * 60 * 60);
+  assert.equal(await recordOrder(null, '682', order, { label: 'direct' }), null);
+  assert.equal(await recordOrder(fakeRedis({ fail: true }), '683', order, { label: 'direct' }), null);
 });
