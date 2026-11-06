@@ -2,7 +2,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_PREVIEW_PROMPT, buildPreviewPrompt } from '../lib/prompt.js';
+import { DEFAULT_PREVIEW_PROMPT, MAX_HERO_POSE_CHARS, buildPreviewPrompt, withHeroPose } from '../lib/prompt.js';
 import { BOOK_LANGUAGES, resolveBookLanguage } from '../lib/book-languages.js';
 
 // Higgsfield's Marketing Studio endpoints reject longer prompts.
@@ -52,10 +52,23 @@ test('the longest default prompt an order can produce fits the provider limit', 
     .map(resolveBookLanguage)
     .sort((a, b) => b.name.length - a.name.length)[0];
   // api/preview.js caps names at 40 characters and ages at 18.
-  const prompt = buildPreviewPrompt(DEFAULT_PREVIEW_PROMPT, {
+  const prompt = buildPreviewPrompt(withHeroPose(DEFAULT_PREVIEW_PROMPT, 'x'.repeat(MAX_HERO_POSE_CHARS + 50)), {
     language: longestLanguage,
     childName: 'x'.repeat(40),
     age: '18'
   });
   assert.ok(prompt.length <= PROVIDER_PROMPT_LIMIT, `prompt is ${prompt.length} characters`);
+});
+
+test('puts the book\'s hero pose first and caps its length', () => {
+  const prompt = withHeroPose('BASE', '  The hero looks\n straight at the reader.  ');
+  assert.ok(prompt.startsWith('THE HERO\'S HEAD ON THIS COVER - The hero looks straight at the reader. '));
+  assert.ok(prompt.endsWith('\n\nBASE'));
+  const long = withHeroPose('BASE', 'q'.repeat(MAX_HERO_POSE_CHARS + 50));
+  assert.equal(long.split('q').length - 1, MAX_HERO_POSE_CHARS);
+});
+
+test('leaves the prompt alone when the book has no hero pose', () => {
+  assert.equal(withHeroPose('BASE', ''), 'BASE');
+  assert.equal(withHeroPose('BASE', null), 'BASE');
 });
