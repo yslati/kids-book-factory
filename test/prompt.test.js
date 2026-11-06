@@ -34,8 +34,9 @@ test('appends the language, the name with its no-leftover-letters rule, and the 
   assert.ok(prompt.startsWith('BASE\n\n'));
   assert.match(prompt, /Book language: French \(fr\)\./);
   assert.match(prompt, /the child's first name is "James"/);
-  assert.match(prompt, /replace the whole name with "James"/);
-  assert.match(prompt, /No letter of the old name may remain/);
+  assert.match(prompt, /Replace every one of them with "James"/);
+  assert.match(prompt, /cap, jersey or clothing, signs, banners, scoreboards and labels/);
+  assert.match(prompt, /No letter of the old name may remain anywhere/);
   assert.match(prompt, /The child is 7 years old\./);
 });
 
