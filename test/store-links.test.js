@@ -2,7 +2,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bookLink, orderLink, pageLink, setBookTitles, storeOrigin } from '../lib/store-links.js';
+import { bookLink, orderLink, pageLink, searchLink, setBookTitles, storeOrigin } from '../lib/store-links.js';
 import { bookFunnels, journeyText, postLiveEvent, summaryEmbed, weeklyEmbed } from '../lib/event-feed.js';
 import { resetDiscordThrottle, setDiscordOutbox } from '../lib/discord.js';
 
@@ -121,4 +121,37 @@ test('the weekly summary compares each number with the week before', () => {
   assert.equal(f.Orders, '**3** · new\nlast week 0');
   assert.equal(f['Previews ready'], '**10** · ±0%\nlast week 10');
   assert.equal(f['Revenue EUR'], '**€120.00** · new\nlast week €0.00');
+});
+
+test('each search posts to #searches, linked to its results; no results stands out', async (t) => {
+  withStore(t);
+  const saved = process.env.DISCORD_WEBHOOK_SEARCHES;
+  process.env.DISCORD_WEBHOOK_SEARCHES = 'https://discord.com/api/webhooks/6/searches-token';
+  resetDiscordThrottle();
+  setDiscordOutbox(null);
+  const original = globalThis.fetch;
+  const posts = [];
+  globalThis.fetch = async (url, init = {}) => {
+    posts.push({ ...JSON.parse(init.body).embeds[0], webhook: String(url) });
+    return new Response(null, { status: 204 });
+  };
+  t.after(() => {
+    globalThis.fetch = original;
+    if (saved === undefined) delete process.env.DISCORD_WEBHOOK_SEARCHES;
+    else process.env.DISCORD_WEBHOOK_SEARCHES = saved;
+    resetDiscordThrottle();
+  });
+
+  const search = (query, results) => ({ name: 'search_submitted', clientId: 'c1', path: '/search', params: {}, referrer: '', search: { query, results } });
+  await postLiveEvent(search('dragon', 14), { visit: null, source: { label: 'google.com', campaign: '' } }, { userAgent: '', requestId: 'x' });
+  await postLiveEvent(search('unicorn (pink)', 0), { visit: null, source: null }, { userAgent: '', requestId: 'x' });
+  assert.equal(posts.length, 2);
+  assert.equal(posts[0].webhook, process.env.DISCORD_WEBHOOK_SEARCHES);
+  assert.equal(posts[0].title, '🔍 dragon');
+  const f = Object.fromEntries(posts[0].fields.map((x) => [x.name, x.value]));
+  assert.equal(f.Results, '14');
+  assert.equal(f.Search, '[dragon](' + STORE + '/search?q=dragon)');
+  assert.equal(f.Source, '`google.com`');
+  assert.equal(posts[1].fields.find((x) => x.name === 'Results').value, '⚠️ none');
+  assert.equal(searchLink('unicorn (pink)'), '[unicorn (pink)](' + STORE + '/search?q=unicorn%20%28pink%29)');
 });

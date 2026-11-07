@@ -84,6 +84,7 @@ The backend posts to Discord channels through their incoming webhooks, one envir
 | #logs | `DISCORD_WEBHOOK_LOGS` | `lib/report.js` | API and storefront warnings and errors |
 | #previews | `DISCORD_WEBHOOK_PREVIEWS` | `lib/preview-feed.js` | every preview: the photo, then the cover |
 | #visits | `DISCORD_WEBHOOK_VISITS` | `lib/event-feed.js` | each new visit live |
+| #searches | `DISCORD_WEBHOOK_SEARCHES` | `lib/event-feed.js` | each storefront search live: the term (linked to its results), the result count (no results stands out), source, location and device |
 | #events | `DISCORD_WEBHOOK_EVENTS` | `lib/event-feed.js` | add-to-carts, checkouts and orders live, plus a daily summary |
 | #higgsfield | `DISCORD_WEBHOOK_HIGGSFIELD` | `lib/higgsfield-feed.js` | Higgsfield alerts live, plus a daily account check |
 | #custom-generation | `DISCORD_WEBHOOK_CUSTOM` | `lib/custom-feed.js` | every custom story request: the answers and photo, the cover, the add-to-cart |
@@ -113,6 +114,7 @@ A Shopify **custom pixel** (`pixel/custom-pixel.js`) sends the storefront's even
 
 - **Live in #visits:** each new visit (its source, landing page, the browser's visit count, location and device). A visit without cookie consent says so instead of a count, and shows no IP.
 - **Live in #events:** each add-to-cart, each checkout start and each order (total, items, discount codes, first or returning customer, the source of the visitor's first visit, and their journey: "3rd visit · 2 days after their first · first came from chatgpt.com"). The journey comes from the pixel's own order event, which saves it for the order id (`kbf:ev:journey:<id>`, a day); the webhook's card waits up to 6 s for it and goes out without it otherwise.
+- **Live in #searches:** each search, with its term linked to the store's results and the number of results; a search with none is highlighted, since it is something people want that the store doesn't show them.
 - **Counted only:** page, product and collection views, cart views and searches (with their terms), plus previews (counted by `/api/preview`) and shares (button presses, link opens, and chat apps fetching a link to show its preview).
 - **Daily summary:** a Vercel cron (`api/cron/daily-summary.js`, once a day between 06:00 and 06:59 UTC) posts the previous UTC day: visitors, visits, page views, the funnel from product views through previews, carts and checkouts to orders and revenue, conversion rates, sharing, each book's funnel (views → previews → carts → orders), the top searches, and the top sources, pages and countries. Vercel authenticates it with `CRON_SECRET`; with that header, `?day=YYYY-MM-DD` posts that day again.
 - **Weekly summary:** the run that posts a Sunday also posts that week (Monday to Sunday, UTC) against the week before: visitors (unique across the week), visits, product views, previews, carts, orders, revenue, shared links opened and conversion, each with its change, plus the week's top books, searches and sources. About 30 more Upstash commands a week.
