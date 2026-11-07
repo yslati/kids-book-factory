@@ -22,6 +22,7 @@ import { withReporting } from '../lib/report.js';
 import {
   SHARE_TTL_SECONDS, isShareSlug, newShareSlug, parseShareTarget, renderExpiredPage, renderSharePage
 } from '../lib/share-link.js';
+import { storeOrigin } from '../lib/store-links.js';
 
 const SHARE_BASE = (process.env.SHARE_BASE_URL || '').replace(/\/+$/, '');
 const COVER_BASE = process.env.R2_PUBLIC_BASE_URL || '';
@@ -38,7 +39,7 @@ export default async function handler(req, res) {
 }
 
 function storeUrl() {
-  return process.env.STORE_URL || allowedOrigins().find((o) => o.indexOf('https://') === 0) || '/';
+  return storeOrigin() || '/';
 }
 
 function linkKey(id) {
