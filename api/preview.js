@@ -6,6 +6,13 @@
 // → { preview_url, generation_id, status: 'ready', remaining }
 // 429 → { error: 'rate-limited', login_required, remaining: 0 }
 //
+// A free fix of a cover the parent reported (preview page, once per cover,
+// outside the daily allowance). Everything but the problem comes from that
+// cover's record (lib/preview-record.js), not from the browser:
+//   { fix_of: generation_id, fix_reason, fix_note? }
+//   → { preview_url, generation_id, status: 'ready' }
+//   404 fix-unavailable (no record, e.g. an older cover), 409 fix-used
+//
 // Also takes the preview page's follow-ups for the requests sheet, here
 // rather than in their own function since Vercel's Hobby plan caps a
 // deployment at 12:
@@ -13,6 +20,7 @@
 //   { action: 'details', generation_id, details }              → 204
 //   { action: 'cart', generation_id, occasion?, details?,
 //     variant }                                                → 204
+//   { action: 'problem', generation_id, reason, note? }        → 204
 //
 // Flow:
 //   1. Verify origin + the one-time preview pass from /upload-url (else a
@@ -37,18 +45,18 @@ import { checkRateLimit, clientIp } from '../lib/ratelimit.js';
 import { publicUrl, putObject, r2Configured } from '../lib/r2.js';
 import { resolveBook, shopifyConfigured } from '../lib/shopify.js';
 import { generateCover, generationConfigured } from '../lib/generate.js';
-import { buildPreviewPrompt } from '../lib/prompt.js';
+import { FIX_REASONS, MAX_FIX_NOTE_CHARS, buildPreviewPrompt, withFix } from '../lib/prompt.js';
 import { childPhotoUrl } from '../lib/child-photo.js';
 import { resolveBookLanguage } from '../lib/book-languages.js';
 import { verifyCustomerToken } from '../lib/customer-token.js';
 import { tagCustomerPreviewLimit } from '../lib/customer-tag.js';
 import { savePreviews } from '../lib/user-previews.js';
-import { previewKey } from '../lib/object-names.js';
+import { newGenerationId, previewKey } from '../lib/object-names.js';
 import { coverForStorage } from '../lib/cover-image.js';
 import { withReporting } from '../lib/report.js';
 import { announcePreview, postPreviewDetails } from '../lib/preview-feed.js';
-import { appendRows, previewFollowUp, previewRow, TABS, updateRow } from '../lib/sheet.js';
-import { claimDetailsPost, readPreviewRecord, savePreviewRecord } from '../lib/preview-record.js';
+import { appendRows, previewFollowUp, previewRow, problemText, TABS, updateRow } from '../lib/sheet.js';
+import { claimDetailsPost, claimFix, readPreviewRecord, releaseFix, savePreviewRecord } from '../lib/preview-record.js';
 import { countPreview } from '../lib/visitor-counts.js';
 import { countEvent } from '../lib/event-stats.js';
 import { waitUntil } from '@vercel/functions';
@@ -111,6 +119,7 @@ async function handler(req, res) {
   if (!r2Configured()) return res.status(503).json({ error: 'storage-not-configured' });
   if (!shopifyConfigured()) return res.status(503).json({ error: 'shopify-not-configured' });
   if (!generationConfigured()) return res.status(503).json({ error: 'generation-not-configured' });
+  if (body.fix_of !== undefined) return fixPreview(req, res, body, startedAt);
 
   const themeId = String(body.theme_id || '').trim();
   const photoKey = String(body.photo_key || '').trim();
@@ -174,6 +183,57 @@ async function handler(req, res) {
     });
   }
 
+  return runPreview(req, res, {
+    themeId, photoKey, generationId, childName, ageText, language, customer, startedAt,
+    remaining: minRemaining(rl.remaining, capped.remaining)
+  });
+}
+
+// The free fix: one per cover, its photo, book, name and age read back from
+// the cover's record. The claim is given back when generation fails.
+async function fixPreview(req, res, body, startedAt) {
+  const fixOf = String(body.fix_of || '').trim();
+  const reason = String(body.fix_reason || '');
+  const note = String(body.fix_note || '').replace(/\s+/g, ' ').trim().slice(0, MAX_FIX_NOTE_CHARS);
+  if (!/^[A-Za-z0-9-]{1,64}$/.test(fixOf)) return res.status(400).json({ error: 'bad-generation-id' });
+  if (!Object.prototype.hasOwnProperty.call(FIX_REASONS, reason)) return res.status(400).json({ error: 'bad-reason' });
+
+  const redis = getRedis();
+  if (!redis) return res.status(503).json({ error: 'fix-unavailable' });
+  // The per-IP backstop still applies, so fixes can't be farmed from one machine.
+  const capped = await checkRateLimit(req, 'preview-ip-cap');
+  if (!capped.success) return res.status(429).json({ error: 'rate-limited', remaining: 0 });
+
+  const record = await readPreviewRecord(redis, fixOf);
+  const language = record && resolveBookLanguage(record.language);
+  if (!record || !record.photoKey || !record.themeId || !language) {
+    return res.status(404).json({ error: 'fix-unavailable' });
+  }
+  // A fix's own cover can't be fixed again.
+  if (record.fixOf || !(await claimFix(redis, fixOf))) return res.status(409).json({ error: 'fix-used' });
+
+  waitUntil(updateRow(TABS.previews, fixOf, { 'Reported problem': problemText(reason, note) }));
+  const ok = await runPreview(req, res, {
+    themeId: record.themeId,
+    photoKey: record.photoKey,
+    generationId: newGenerationId(),
+    childName: record.childName || '',
+    ageText: record.age || '',
+    language,
+    customer: verifyCustomerToken(body),
+    startedAt,
+    remaining: null,
+    fix: { of: fixOf, reason, note }
+  });
+  if (!ok) {
+    try { await releaseFix(redis, fixOf); } catch (e) { /* the parent just can't retry */ }
+  }
+}
+
+// Generates, stores and records one cover, then answers the request.
+// Resolves to true when the cover is ready.
+async function runPreview(req, res, p) {
+  const { themeId, photoKey, generationId, childName, ageText, language, customer, startedAt, fix } = p;
   // Counted as generation starts, whether or not it succeeds.
   const counts = countPreview(getRedis(), req, customer.valid ? customer.customerId : null);
   waitUntil(counts);
@@ -190,7 +250,8 @@ async function handler(req, res) {
     language: language.name,
     customerId: customer.valid ? customer.customerId : null,
     startedAt,
-    counts
+    counts,
+    fix: fix ? { of: fix.of, problem: problemText(fix.reason, fix.note) } : null
   });
   const record = (outcome) => waitUntil(appendRows(TABS.previews, [previewRow(req, {
     book: themeId,
@@ -200,7 +261,8 @@ async function handler(req, res) {
     photoUrl,
     customerId: customer.valid ? customer.customerId : null,
     generationId,
-    startedAt
+    startedAt,
+    fix
   }, outcome)]));
 
   let prompt = '';
@@ -209,6 +271,7 @@ async function handler(req, res) {
     //    photo is checked (and shrunk if full-size) for the generator.
     const [book, childUrl] = await Promise.all([resolveBook(themeId), childPhotoUrl(photoKey)]);
     prompt = buildPreviewPrompt(book.prompt, { language, childName, age: ageText });
+    if (fix) prompt = withFix(prompt, fix, childName);
 
     // 3. Generate, falling back down the model chain on failure.
     const generated = await generateCover(book.coverUrl, childUrl, prompt, {
@@ -263,25 +326,26 @@ async function handler(req, res) {
       } catch (e) { /* never surfaces */ }
     }
 
-    // The extra details card reads this; a Redis problem must never fail a paid cover.
-    if (feed.link) {
-      waitUntil(feed.link
-        .then((link) => savePreviewRecord(getRedis(), generationId, {
-          childName, age: ageText, bookTitle: book.title || '', coverUrl: previewUrl, link
-        }))
-        .catch((e) => console.warn('[preview] record not saved:', (e && e.message) || e)));
-    }
+    // The extra details card and the free fix read this; a Redis problem must
+    // never fail a paid cover.
+    waitUntil(Promise.resolve(feed.link)
+      .then((link) => savePreviewRecord(getRedis(), generationId, {
+        childName, age: ageText, bookTitle: book.title || '', coverUrl: previewUrl, link: link || '',
+        themeId, photoKey, language: language.code, fixOf: fix ? fix.of : ''
+      }))
+      .catch((e) => console.warn('[preview] record not saved:', (e && e.message) || e)));
     feed.done({ coverUrl: previewUrl, bookTitle: book.title, attempt: generated.attempt, temporary: previewUrl === generatedUrl });
     record({ coverUrl: previewUrl, bookTitle: book.title, attempt: generated.attempt, prompt });
     waitUntil(countEvent(getRedis(), 'preview_ready'));
-    return res.status(200).json({
+    res.status(200).json({
       preview_url: previewUrl,
       generation_id: generationId,
       status: 'ready',
       // The tighter of the two windows - that's the number that will actually
       // stop them. null when rate limiting is disabled (theme hides the counter).
-      remaining: minRemaining(rl.remaining, capped.remaining)
+      remaining: p.remaining
     });
+    return true;
   } catch (err) {
     const code = (err && err.message) || 'preview-failed';
     // Log the real error to the server (vercel dev terminal) for diagnosis.
@@ -291,8 +355,10 @@ async function handler(req, res) {
     record({ error: detail, prompt });
     waitUntil(countEvent(getRedis(), 'preview_failed'));
     if (code === 'product-not-found' || code === 'prompt-missing' || code === 'cover-missing') {
-      return res.status(422).json({ error: code, status: 'failed', detail });
+      res.status(422).json({ error: code, status: 'failed', detail });
+    } else {
+      res.status(502).json({ error: 'generation-failed', status: 'failed', detail });
     }
-    return res.status(502).json({ error: 'generation-failed', status: 'failed', detail });
+    return false;
   }
 }
