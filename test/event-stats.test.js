@@ -2,7 +2,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { cookielessId, countEvent, dayOf, readDay, recordEvent, recordOrder } from '../lib/event-stats.js';
+import { cookielessId, countEvent, dayOf, readDay, readJourney, recordEvent, recordOrder, saveJourney, searchTerm, sumDays } from '../lib/event-stats.js';
 
 function fakeRedis({ fail = false } = {}) {
   const strings = new Map();
@@ -140,4 +140,43 @@ test('a webhook order counts once, with its source and revenue', async () => {
   assert.equal(redis.ttls.get('kbf:ev:order:681'), 40 * 24 * 60 * 60);
   assert.equal(await recordOrder(null, '682', order, { label: 'direct' }), null);
   assert.equal(await recordOrder(fakeRedis({ fail: true }), '683', order, { label: 'direct' }), null);
+});
+
+test("each book's funnel and each search are counted for the day", async () => {
+  const redis = fakeRedis();
+  await recordEvent(redis, { name: 'product_viewed', clientId: 'c1', path: '/fr/products/The-Dragon-Rider', params: {}, referrer: '', product: { title: 'The Dragon Rider: Personalized Dragon Book for Boys' } });
+  await countEvent(redis, 'preview_ready', 'the-dragon-rider');
+  await recordEvent(redis, { name: 'product_added_to_cart', clientId: 'c1', path: '/pages/create-your-book', params: {}, referrer: '', product: { title: 'The Dragon Rider: Personalized Dragon Book for Boys', quantity: 1 } });
+  await recordOrder(redis, '5870000000001', { checkout: { total: null, items: [{ title: 'The Dragon Rider: Personalized Dragon Book for Boys', quantity: 2 }] } }, { label: 'direct' });
+  await recordEvent(redis, { name: 'search_submitted', clientId: 'c1', path: '/search', params: {}, referrer: '', search: { query: '  Unicorn   Book ', results: 0 } });
+  const stats = await readDay(redis, day);
+  assert.deepEqual(stats.books, { 'views:the-dragon-rider': 1, 'previews:the-dragon-rider': 1, 'carts:The Dragon Rider': 1, 'orders:The Dragon Rider': 2 });
+  assert.deepEqual(stats.searches, { 'unicorn book': 1 });
+  assert.equal(searchTerm('  A  B '), 'a b');
+});
+
+test("an order's journey is saved by the pixel and read by the webhook", async () => {
+  const redis = fakeRedis();
+  const before = Date.now();
+  await recordEvent(redis, page('c9', '/', { referrer: 'https://chatgpt.com/' }));
+  await saveJourney(redis, '5870000000001', 'c9');
+  const journey = await readJourney(redis, '5870000000001', { waitMs: 0 });
+  assert.equal(journey.visits, 1);
+  assert.equal(journey.firstSource, 'chatgpt.com');
+  assert.ok(journey.firstAt >= before);
+  assert.equal(await readJourney(redis, 'missing', { waitMs: 0 }), null, 'no wait, no journey');
+});
+
+test('days add up into a week', () => {
+  const week = sumDays([
+    { day: '2026-11-02', count: { visits: 2 }, pages: {}, sources: { direct: 1 }, countries: {}, revenue: { EUR: 10 }, orderSources: {}, books: { 'views:a': 1 }, searches: {} },
+    { day: '2026-11-08', count: { visits: 3 }, pages: {}, sources: { direct: 2 }, countries: {}, revenue: { EUR: 5.5 }, orderSources: {}, books: { 'views:a': 4 }, searches: { owl: 1 } }
+  ], 4);
+  assert.equal(week.from, '2026-11-02');
+  assert.equal(week.to, '2026-11-08');
+  assert.equal(week.visitors, 4);
+  assert.deepEqual(week.count, { visits: 5 });
+  assert.deepEqual(week.revenue, { EUR: 15.5 });
+  assert.deepEqual(week.books, { 'views:a': 5 });
+  assert.deepEqual(week.searches, { owl: 1 });
 });

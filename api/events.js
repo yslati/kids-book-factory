@@ -19,7 +19,7 @@ import { allowedHosts, applyCors } from '../lib/cors.js';
 import { getRedis } from '../lib/redis.js';
 import { visitorOf } from '../lib/discord.js';
 import { normaliseEvent } from '../lib/storefront-events.js';
-import { cookielessId, recordEvent } from '../lib/event-stats.js';
+import { cookielessId, recordEvent, saveJourney } from '../lib/event-stats.js';
 import { postLiveEvent } from '../lib/event-feed.js';
 import { appendRows, storefrontRows } from '../lib/sheet.js';
 import { orderWebhookOn } from '../lib/shopify-order.js';
@@ -46,12 +46,16 @@ function overLimit(ip) {
 }
 
 async function record(event, visitor) {
-  // Shopify's order webhook (api/shopify-webhook.js) reports every order,
-  // signed; the pixel's can be missed or faked.
-  if (event.name === 'checkout_completed' && orderWebhookOn()) return;
   try {
     const redis = getRedis();
     if (!event.consented) event.clientId = await cookielessId(redis, visitor);
+    // Shopify's order webhook (api/shopify-webhook.js) reports every order,
+    // signed; the pixel's can be missed or faked, so it only tells the
+    // webhook's card how the buyer got here.
+    if (event.name === 'checkout_completed' && orderWebhookOn()) {
+      await saveJourney(redis, event.checkout && event.checkout.orderId, event.clientId);
+      return;
+    }
     const recorded = event.clientId ? await recordEvent(redis, event, { country: visitor.country, ownHosts: OWN_HOSTS }) : null;
     const sheet = storefrontRows(event, recorded, visitor);
     await Promise.all([

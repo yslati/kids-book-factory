@@ -73,7 +73,8 @@ test('the first run posts from the earliest day with totals through yesterday, o
   const days = await postDueSummaries(redis, NOW);
   assert.deepEqual(days.map((d) => d.day), ['2026-10-18', '2026-10-19', '2026-10-20']);
   assert.ok(days.every((d) => d.sent));
-  assert.deepEqual(titles.map((title) => title.match(/\d+ October/)[0]), ['18 October', '19 October', '20 October']);
+  assert.deepEqual(titles.map((title) => title.match(/\d+ (October|Oct)/)[0]), ['18 October', '12 Oct', '19 October', '20 October'], 'Sunday 18 October also posts its week');
+  assert.match(titles[1], /^📈 12 Oct – 18 Oct 2026 \(UTC\)$/);
   assert.equal(redis.strings.get(LAST), '2026-10-20');
   assert.equal(redis.strings.has(LOCK), false, 'the lock is released');
 });

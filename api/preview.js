@@ -46,9 +46,10 @@ import { savePreviews } from '../lib/user-previews.js';
 import { previewKey } from '../lib/object-names.js';
 import { coverForStorage } from '../lib/cover-image.js';
 import { withReporting } from '../lib/report.js';
-import { announcePreview, postPreviewDetails } from '../lib/preview-feed.js';
-import { appendRows, previewFollowUp, previewRow, TABS, updateRow } from '../lib/sheet.js';
-import { claimDetailsPost, readPreviewRecord, savePreviewRecord } from '../lib/preview-record.js';
+import { visitorOf } from '../lib/discord.js';
+import { announcePreview, postPreviewDetails, postShareClick } from '../lib/preview-feed.js';
+import { appendRows, previewFollowUp, previewRow, shareRow, TABS, updateRow } from '../lib/sheet.js';
+import { claimDetailsPost, claimSharePost, readPreviewRecord, savePreviewRecord } from '../lib/preview-record.js';
 import { countPreview } from '../lib/visitor-counts.js';
 import { countEvent } from '../lib/event-stats.js';
 import { waitUntil } from '@vercel/functions';
@@ -75,11 +76,30 @@ async function followUp(req, res, body) {
   if (!limited.success) return res.status(429).json({ error: 'rate-limited' });
   res.status(204).end();
   waitUntil(updateRow(TABS.previews, value.generationId, value.fields));
-  if (body.action === 'cart' && value.details) waitUntil(postDetails(req, value));
+  if (body.action === 'cart') waitUntil(postDetails(req, value));
+  if (body.action === 'share') waitUntil(recordShare(req, value));
 }
 
-// The extra details card in #previews: only for a cover this backend made,
-// and only once per generation.
+// A share button press: counted, a Shares row, and a #previews card once per
+// button per generation (only for a cover this backend made).
+async function recordShare(req, value) {
+  try {
+    const redis = getRedis();
+    const record = await readPreviewRecord(redis, value.generationId);
+    await Promise.all([
+      countEvent(redis, 'share_clicked'),
+      appendRows(TABS.shares, [shareRow({
+        Event: 'Share clicked', Via: value.via, Child: (record && record.childName) || '', Book: (record && record.bookTitle) || '', Generation: value.generationId
+      }, visitorOf(req))])
+    ]);
+    if (record && (await claimSharePost(redis, value.generationId, value.via))) await postShareClick(req, record, value);
+  } catch (e) {
+    console.warn('[preview] share not recorded:', (e && e.message) || e);
+  }
+}
+
+// The add-to-cart card in #previews, with the occasion and extra details:
+// only for a cover this backend made, and only once per generation.
 async function postDetails(req, value) {
   try {
     const redis = getRedis();
@@ -273,7 +293,7 @@ async function handler(req, res) {
     }
     feed.done({ coverUrl: previewUrl, bookTitle: book.title, attempt: generated.attempt, temporary: previewUrl === generatedUrl });
     record({ coverUrl: previewUrl, bookTitle: book.title, attempt: generated.attempt, prompt });
-    waitUntil(countEvent(getRedis(), 'preview_ready'));
+    waitUntil(countEvent(getRedis(), 'preview_ready', themeId));
     return res.status(200).json({
       preview_url: previewUrl,
       generation_id: generationId,

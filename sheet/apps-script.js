@@ -13,7 +13,7 @@
 /** @OnlyCurrentDoc */
 
 // The tabs setup() lays out, in this order; others are added when used.
-const TABS = ['Book previews', 'Custom stories', 'Orders', 'Carts', 'Checkouts', 'Visits', 'Daily'];
+const TABS = ['Book previews', 'Custom stories', 'Orders', 'Carts', 'Checkouts', 'Visits', 'Searches', 'Shares', 'Daily'];
 const MAX_ROWS = 50;
 // Rows stay one line high, so a prompt's line breaks don't stretch them;
 // the cell still holds the full text.
