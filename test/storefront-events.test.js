@@ -83,3 +83,10 @@ test('the pixel sends the same campaign parameters the backend keeps', () => {
   const list = JSON.parse(pixel.match(/const SOURCE_PARAMS = (\[[^\]]+\])/)[1].replace(/'/g, '"'));
   assert.deepEqual(list, SOURCE_PARAMS);
 });
+
+test('a search keeps its term and result count, nothing else', () => {
+  const event = normaliseEvent({ event: 'search_submitted', clientId: 'c1', path: '/search', search: { query: '  unicorn ', results: 3, email: 'x@y.z' } });
+  assert.deepEqual(event.search, { query: 'unicorn', results: 3 });
+  assert.equal(normaliseEvent({ event: 'search_submitted', clientId: 'c1', path: '/search', search: { query: '' } }).search, undefined);
+  assert.equal(normaliseEvent({ event: 'page_viewed', clientId: 'c1', path: '/', search: { query: 'x' } }).search, undefined, 'only on searches');
+});

@@ -203,12 +203,13 @@ test('an order adds one Orders row per book', () => {
         { title: 'Custom storybook', variant: 'Softcover', quantity: 1, price: { amount: 29.99, currency: 'USD' } }
       ]
     }
-  }, { visit: null, source: { label: 'tiktok', campaign: '' } }, visitor);
+  }, { visit: null, source: { label: 'tiktok', campaign: '' }, journey: { visits: 3, firstAt: Date.now() - 2.5 * 86400000, firstSource: 'chatgpt.com' } }, visitor);
   assert.equal(out.tab, TABS.orders);
   assert.equal(out.rows.length, 2);
   assert.deepEqual(without(out.rows[1], 'Date'), {
     Order: '6612345678', Book: 'Custom storybook', Cover: 'Softcover', Quantity: 1, Price: 29.99,
-    'Order total': 74.98, Currency: 'USD', 'Discount codes': '', Customer: 'First order', Source: 'tiktok', ...PLACE
+    'Order total': 74.98, Currency: 'USD', 'Discount codes': '', Customer: 'First order', Source: 'tiktok',
+    Journey: '3rd visit · 2 days after their first · first came from chatgpt.com', ...PLACE
   });
   const empty = storefrontRows({ name: 'checkout_completed', checkout: { orderId: '1', firstOrder: null, total: null, discounts: [], items: [] } }, null, visitor);
   assert.equal(empty.rows.length, 1, 'an order without items still leaves a row');
@@ -219,8 +220,10 @@ test('a Daily row has the funnel, revenue and top lists', () => {
   const row = dailyRow({
     day: '2026-10-24',
     visitors: 120,
-    count: { visits: 150, page_viewed: 600, product_viewed: 200, preview_started: 12, preview_ready: 11, preview_failed: 1, product_added_to_cart: 4, checkout_started: 3, checkout_completed: 2 },
+    count: { visits: 150, page_viewed: 600, product_viewed: 200, preview_started: 12, preview_ready: 11, preview_failed: 1, product_added_to_cart: 4, checkout_started: 3, checkout_completed: 2, share_clicked: 3, share_opened: 5, share_unfurled: 2 },
     pages: { '/': 300, '/products/a': 50 },
+    books: { 'views:a': 50, 'carts:A': 2 },
+    searches: { unicorn: 4 },
     sources: { google: 80, direct: 70 },
     countries: { FR: 90, US: 30 },
     revenue: { USD: 89.98 },
@@ -230,7 +233,9 @@ test('a Daily row has the funnel, revenue and top lists', () => {
     Day: '2026-10-24', Visitors: 120, Visits: 150, 'Visits without cookie consent': 0, 'Page views': 600, 'Product views': 200, 'Collection views': 0,
     Searches: 0, 'Cart views': 0, 'Previews started': 12, 'Previews ready': 11, 'Previews failed': 1,
     'Added to cart': 4, 'Checkouts started': 3, Orders: 2, Revenue: 89.98, Currency: 'USD',
+    'Share clicks': 3, 'Shared links opened': 5, 'Chat link previews': 2,
     'Top sources': 'google (80), direct (70)', 'Orders by source': 'google (2)',
+    'Top books': 'a (50 views, 0 previews, 0 carts, 0 orders); A (0 views, 0 previews, 2 carts, 0 orders)', 'Top searches': 'unicorn (4)',
     'Top pages': '/ (300), /products/a (50)', 'Top countries': 'France (90), United States (30)'
   });
   const mixed = dailyRow({ day: '2026-10-25', visitors: 0, count: {}, pages: {}, sources: {}, countries: {}, revenue: { USD: 10, EUR: 5 }, orderSources: {} });
@@ -240,7 +245,7 @@ test('a Daily row has the funnel, revenue and top lists', () => {
 
 test('preview page follow-ups become sheet fields', () => {
   assert.deepEqual(previewFollowUp({ action: 'occasion', generation_id: 'k3x9p2m7q1', occasion: 'A birthday' }),
-    { value: { generationId: 'k3x9p2m7q1', details: '', variant: '', fields: { Occasion: 'A birthday' } } });
+    { value: { generationId: 'k3x9p2m7q1', occasion: 'A birthday', details: '', variant: '', fields: { Occasion: 'A birthday' } } });
   assert.deepEqual(previewFollowUp({ action: 'occasion', generation_id: 'k3x9p2m7q1', occasion: '' }).value.fields,
     { Occasion: '' }, 'clearing the chip clears the cell');
   assert.deepEqual(previewFollowUp({ action: 'cart', generation_id: 'k3x9p2m7q1', occasion: 'A new baby', variant: 'Hardcover' }).value.fields,
@@ -267,6 +272,19 @@ test('follow-ups with anything off the list are refused', () => {
   assert.equal(previewFollowUp({ action: 'occasion', generation_id: '../x', occasion: 'A birthday' }).error, 'bad-generation-id');
   assert.equal(previewFollowUp({ action: 'occasion', generation_id: 'k3x9p2m7q1', occasion: '=HYPERLINK("x")' }).error, 'bad-occasion');
   assert.equal(previewFollowUp(null).error, 'bad-action');
+  assert.equal(previewFollowUp({ action: 'share', generation_id: 'k3x9p2m7q1', via: 'email' }).error, 'bad-via');
+});
+
+test('a share click names the button', () => {
+  assert.deepEqual(previewFollowUp({ action: 'share', generation_id: 'k3x9p2m7q1', via: 'whatsapp' }),
+    { value: { generationId: 'k3x9p2m7q1', via: 'whatsapp', fields: { Shared: 'whatsapp' } } });
+});
+
+test('a search becomes a Searches row', () => {
+  const out = storefrontRows({ name: 'search_submitted', search: { query: 'unicorn', results: 0 } }, { visit: null, source: { label: 'direct', campaign: '' } }, visitor);
+  assert.equal(out.tab, TABS.searches);
+  assert.deepEqual(without(out.rows[0], 'Date'), { Search: 'unicorn', Results: 0, Source: 'direct', ...PLACE });
+  assert.equal(storefrontRows({ name: 'search_submitted' }, null, visitor), null, 'no row without a term');
 });
 
 test('does nothing until both the URL and the secret are set', async (t) => {

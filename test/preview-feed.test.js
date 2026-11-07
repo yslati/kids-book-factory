@@ -226,17 +226,17 @@ test('without a count, the cards go out without the field', async (t) => {
   assert.ok(posts(calls).every((e) => countOf(e) === undefined));
 });
 
-test('the add-to-cart card carries the extra details, linked to the photo', async (t) => {
+test('the add-to-cart card carries the occasion and extra details, linked to the photo', async (t) => {
   withWebhook(t, WEBHOOK);
   const calls = stubDiscord(t);
   const link = 'https://discord.com/channels/999/222/111';
   await postPreviewDetails(req, { childName: 'Emma', age: '5', bookTitle: 'The Winning Goal', coverUrl: COVER, link },
-    { generationId: 'k3x9p2m7q1', variant: 'Hardcover', details: 'Has a dog, **Biscuit** @everyone' });
+    { generationId: 'k3x9p2m7q1', variant: 'Hardcover', occasion: 'A birthday', details: 'Has a dog, **Biscuit** @everyone' });
   const [card] = posts(calls);
   assert.equal(card.title, '🛒 Emma, 5 · The Winning Goal');
   assert.equal(card.url, link);
   assert.deepEqual(card.thumbnail, { url: COVER });
-  assert.deepEqual(fieldsOf(card), { Cover: 'Hardcover', 'Extra details': 'Has a dog, Biscuit everyone', Generation: '`k3x9p2m7q1`' });
+  assert.deepEqual(fieldsOf(card), { Cover: 'Hardcover', Occasion: 'A birthday', 'Extra details': 'Has a dog, Biscuit everyone', Generation: '`k3x9p2m7q1`' });
 });
 
 test('no details card while the channel has no webhook', async (t) => {

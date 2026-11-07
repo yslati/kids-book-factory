@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { bookLink, orderLink, pageLink, setBookTitles, storeOrigin } from '../lib/store-links.js';
-import { postLiveEvent, summaryEmbed } from '../lib/event-feed.js';
+import { bookFunnels, journeyText, postLiveEvent, summaryEmbed, weeklyEmbed } from '../lib/event-feed.js';
 import { resetDiscordThrottle, setDiscordOutbox } from '../lib/discord.js';
 
 const STORE = 'https://booktokids.com';
@@ -84,4 +84,41 @@ test('the visit card and the daily summary link pages by book title', async (t) 
   const top = embed.fields.find((f) => f.name === 'Top pages').value;
   assert.ok(top.length <= 1024);
   assert.ok(top.split('\n').every((line) => /^\[[^\]]+\]\(https:\/\/booktokids\.com\/products\/[^)]+\) · \d+$/.test(line)), 'no line is cut mid-link');
+});
+
+test('the summary shows each book\'s funnel by title, the top searches and sharing', (t) => {
+  withStore(t);
+  const stats = {
+    day: '2026-11-08', visitors: 10, count: { share_clicked: 2, share_opened: 3, share_unfurled: 1 }, pages: {}, sources: { 'share / link': 2 }, countries: {}, revenue: {}, orderSources: {},
+    books: { ['views:' + HANDLE]: 40, ['previews:' + HANDLE]: 5, 'carts:The Midnight Elf Workshop': 2, 'orders:The Midnight Elf Workshop': 1, 'views:other-book': 3 },
+    searches: { unicorn: 4, dragon: 1 }
+  };
+  const funnels = bookFunnels(stats.books, titles);
+  assert.deepEqual(funnels[0], { handle: HANDLE, title: 'The Midnight Elf Workshop', views: 40, previews: 5, carts: 2, orders: 1 });
+  const f = Object.fromEntries(summaryEmbed(stats, titles).fields.map((x) => [x.name, x.value]));
+  assert.equal(f['Top books'].split('\n')[0], '[The Midnight Elf Workshop](' + STORE + '/products/' + HANDLE + ') · 40 views → 5 previews → 2 carts → 1 order');
+  assert.equal(f['Top searches'], '`unicorn` · 4\n`dragon` · 1');
+  assert.equal(f.Sharing, '2 share clicks · 3 link opens\n1 chat preview · 2 visits from shares');
+});
+
+test('the order journey reads as visits, days and first source', () => {
+  const now = Date.parse('2026-11-08T12:00:00Z');
+  assert.equal(journeyText({ visits: 3, firstAt: now - 2.2 * 86400000, firstSource: 'chatgpt.com' }, now), '3rd visit · 2 days after their first · first came from chatgpt.com');
+  assert.equal(journeyText({ visits: 1, firstAt: now - 3600000, firstSource: 'direct' }, now), '1st visit · same day as their first · first came from direct');
+  assert.equal(journeyText(null), '');
+});
+
+test('the weekly summary compares each number with the week before', () => {
+  const blank = { pages: {}, sources: {}, countries: {}, orderSources: {}, books: {}, searches: {} };
+  const embed = weeklyEmbed(
+    { ...blank, from: '2026-11-02', to: '2026-11-08', visitors: 120, count: { visits: 150, checkout_completed: 3, preview_ready: 10 }, revenue: { EUR: 120 } },
+    { ...blank, from: '2026-10-26', to: '2026-11-01', visitors: 100, count: { visits: 160, checkout_completed: 0, preview_ready: 10 }, revenue: {} }
+  );
+  const f = Object.fromEntries(embed.fields.map((x) => [x.name, x.value]));
+  assert.equal(embed.title, '📈 2 Nov – 8 Nov 2026 (UTC)');
+  assert.equal(f.Visitors, '**120** · +20%\nlast week 100');
+  assert.equal(f.Visits, '**150** · −6%\nlast week 160');
+  assert.equal(f.Orders, '**3** · new\nlast week 0');
+  assert.equal(f['Previews ready'], '**10** · ±0%\nlast week 10');
+  assert.equal(f['Revenue EUR'], '**€120.00** · new\nlast week €0.00');
 });

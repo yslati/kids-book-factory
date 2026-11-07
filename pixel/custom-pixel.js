@@ -6,9 +6,9 @@
 //
 // Sends page, product and collection views, searches, cart views,
 // add-to-carts, checkout starts and orders to the backend's /events
-// (api/events.js). Only paths, campaign tags, titles, prices and quantities
-// leave the pixel: never customer details, other query parameters or line
-// item properties, which carry the child's name.
+// (api/events.js). Only paths, campaign tags, search terms, titles, prices
+// and quantities leave the pixel: never customer details, other query
+// parameters or line item properties, which carry the child's name.
 
 const ENDPOINT = 'https://kids-book-factory.vercel.app/events';
 
@@ -56,7 +56,10 @@ function withCheckout(event) {
 
 analytics.subscribe('page_viewed', (event) => send(base(event)));
 analytics.subscribe('collection_viewed', (event) => send(base(event)));
-analytics.subscribe('search_submitted', (event) => send(base(event)));
+analytics.subscribe('search_submitted', (event) => {
+  const result = event.data.searchResult || {};
+  send({ ...base(event), search: { query: result.query, results: (result.productVariants || []).length } });
+});
 analytics.subscribe('cart_viewed', (event) => send(base(event)));
 
 analytics.subscribe('product_viewed', (event) => {

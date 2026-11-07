@@ -4,9 +4,11 @@
 // POST /            Body: { url } → { id, short_url }
 //   url is the preview page URL the theme's share card builds (kb-my-book.js).
 //   The same URL always gets the same link back while it lives.
-// GET  /<id>        → 302 to the stored preview page. Link-preview bots get a
-//   small page with the child's cover and name as OG tags instead, which the
-//   storefront itself cannot render per preview.
+// GET  /<id>        → 302 to the stored preview page, tagged utm_source=share
+//   so the visit counts as one from a share. Link-preview bots get a small
+//   page with the child's cover and name as OG tags instead, which the
+//   storefront itself cannot render per preview. Each open is counted, added
+//   to the sheet's Shares tab and, for a link's first few, posted to #previews.
 // GET  /            → 302 to the store.
 //
 // Links live 30 days in Upstash, like the covers they point at:
@@ -15,17 +17,24 @@
 
 import { createHash } from 'node:crypto';
 import { isbot } from 'isbot';
+import { waitUntil } from '@vercel/functions';
 import { allowedOrigins, applyCors, isOriginAllowed } from '../lib/cors.js';
+import { visitorOf } from '../lib/discord.js';
+import { countEvent } from '../lib/event-stats.js';
+import { postShareOpen } from '../lib/preview-feed.js';
 import { checkRateLimit } from '../lib/ratelimit.js';
 import { getRedis } from '../lib/redis.js';
 import { withReporting } from '../lib/report.js';
 import {
   SHARE_TTL_SECONDS, isShareSlug, newShareSlug, parseShareTarget, renderExpiredPage, renderSharePage
 } from '../lib/share-link.js';
+import { appendRows, shareRow, TABS } from '../lib/sheet.js';
 import { storeOrigin } from '../lib/store-links.js';
 
 const SHARE_BASE = (process.env.SHARE_BASE_URL || '').replace(/\/+$/, '');
 const COVER_BASE = process.env.R2_PUBLIC_BASE_URL || '';
+// #previews cards per link; later opens are only counted.
+const OPEN_POSTS = 5;
 
 const reportedCreate = withReporting(create);
 
@@ -44,6 +53,37 @@ function storeUrl() {
 
 function linkKey(id) {
   return 'kbf:share:' + id;
+}
+
+function opensKey(id) {
+  return 'kbf:share-opens:' + id;
+}
+
+// The preview page with the tags that mark its visit as one from a share.
+function sharedVisitUrl(url) {
+  const u = new URL(url);
+  u.searchParams.set('utm_source', 'share');
+  u.searchParams.set('utm_medium', 'link');
+  return u.toString();
+}
+
+// A person opening a shared link: counted, a Shares row and, for the link's
+// first few opens, a #previews card. Never throws.
+async function recordOpen(req, id, target) {
+  try {
+    const redis = getRedis();
+    const opens = Number(await redis.incr(opensKey(id))) || 1;
+    if (opens === 1) await redis.expire(opensKey(id), SHARE_TTL_SECONDS);
+    const visitor = visitorOf(req);
+    const book = new URL(target.url).searchParams.get('b') || '';
+    await Promise.all([
+      countEvent(redis, 'share_opened'),
+      appendRows(TABS.shares, [shareRow({ Event: 'Link opened', Opens: opens, Child: target.childName, Book: book, Link: SHARE_BASE + '/' + id }, visitor)]),
+      opens <= OPEN_POSTS && postShareOpen(visitor, { id, childName: target.childName, coverUrl: target.coverUrl, book }, opens)
+    ]);
+  } catch (e) {
+    console.warn('[share] open not recorded:', (e && e.message) || e);
+  }
 }
 
 function urlKey(url) {
@@ -115,7 +155,12 @@ async function open(req, res) {
   const target = entry && parseShareTarget(entry.url, { allowedOrigins: allowedOrigins(), coverBase: COVER_BASE });
   if (!target) return sendHtml(res, renderExpiredPage({ storeUrl: storeUrl() }));
 
-  if (!isbot(req.headers['user-agent'] || '')) return res.redirect(302, target.url);
+  if (!isbot(req.headers['user-agent'] || '')) {
+    waitUntil(recordOpen(req, id, target));
+    return res.redirect(302, sharedVisitUrl(target.url));
+  }
+  // A chat app fetching the link to show its preview: the link was just sent.
+  waitUntil(countEvent(redis, 'share_unfurled'));
   return sendHtml(res, renderSharePage({
     shortUrl: SHARE_BASE + '/' + id,
     target: target.url,

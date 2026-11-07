@@ -11,7 +11,7 @@
 import { waitUntil } from '@vercel/functions';
 import { allowedHosts } from '../lib/cors.js';
 import { getRedis } from '../lib/redis.js';
-import { recordOrder } from '../lib/event-stats.js';
+import { readJourney, recordOrder } from '../lib/event-stats.js';
 import { postLiveEvent } from '../lib/event-feed.js';
 import { appendRows, storefrontRows } from '../lib/sheet.js';
 import { orderFromWebhook, validSignature } from '../lib/shopify-order.js';
@@ -37,10 +37,11 @@ async function record(order, requestId) {
   try {
     const { event } = order;
     const source = trafficSource({ params: event.params, referrer: event.referrer, ownHosts: OWN_HOSTS });
-    const counted = await recordOrder(getRedis(), order.id, event, source);
+    const redis = getRedis();
+    const counted = await recordOrder(redis, order.id, event, source);
     if (counted === false) return;
     const visitor = { ...order.visitor, requestId };
-    const recorded = { visit: null, source };
+    const recorded = { visit: null, source, journey: await readJourney(redis, order.id) };
     const sheet = storefrontRows(event, recorded, visitor);
     await Promise.all([
       postLiveEvent(event, recorded, visitor),
