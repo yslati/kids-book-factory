@@ -148,3 +148,21 @@ test('gives up at the timeout and asks Higgsfield to cancel', async (t) => {
   assert.equal(last.url, CANCEL_URL);
   assert.equal(last.init.method, 'POST');
 });
+
+test('stops polling as soon as another attempt wins, and asks Higgsfield to cancel', async (t) => {
+  withKey(t);
+  const calls = stubFetch(t, (url) => {
+    if (url === STATUS_URL) return json({ status: 'in_progress', request_id: 'req-1' });
+    if (url === CANCEL_URL) return new Response(null, { status: 202 });
+    return json({ status: 'queued', request_id: 'req-1', status_url: STATUS_URL, cancel_url: CANCEL_URL });
+  });
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), 100);
+  const started = Date.now();
+  await assert.rejects(
+    generateWithHiggsfield('https://c/cover.jpg', 'https://c/child.jpg', 'p', { ...FLARE_MEDIUM, timeoutMs: 20000, signal: controller.signal }),
+    /higgsfield-abandoned/
+  );
+  assert.ok(Date.now() - started < 1000, 'returns without waiting for the next poll');
+  assert.equal(calls[calls.length - 1].url, CANCEL_URL);
+});

@@ -11,7 +11,7 @@ const FLARE_LOW = { provider: 'higgsfield', model: 'marketing-studio/image/flare
 const STUDIO_LOW = { provider: 'higgsfield', model: 'marketing-studio/image', quality: 'low' };
 const FAL = { provider: 'fal' };
 const CHAIN = [FLARE_MEDIUM, FLARE_LOW, STUDIO_LOW, FAL];
-const OPTS = { attemptCapMs: 28000, minAttemptMs: 15000 };
+const OPTS = { hedgeMs: 28000, minAttemptMs: 15000 };
 
 test('labels name the provider, model and quality that are set', () => {
   assert.equal(attemptLabel(FLARE_MEDIUM), 'higgsfield marketing-studio/image/flare medium');
@@ -52,44 +52,72 @@ test('stops at the first attempt that succeeds', async () => {
 });
 
 test('falls down the chain in order until an attempt succeeds', async () => {
-  const c = clock();
   const seen = [];
   const result = await runAttempts([FLARE_MEDIUM, FLARE_LOW, STUDIO_LOW], async (attempt) => {
     seen.push(attempt);
-    c.advance(2000);
     if (attempt !== STUDIO_LOW) throw new Error('higgsfield-nsfw');
     return 'https://cdn.example.com/studio.png';
-  }, { ...OPTS, deadline: 50000, now: c.now });
+  }, { ...OPTS, deadline: Date.now() + 50000 });
 
   assert.deepEqual(seen, [FLARE_MEDIUM, FLARE_LOW, STUDIO_LOW]);
   assert.equal(result.attempt, STUDIO_LOW);
 });
 
-test('caps every attempt but the last, which gets whatever is left', async () => {
+test('every attempt may run until the deadline', async () => {
   const c = clock();
   const timeouts = [];
   await assert.rejects(runAttempts([FLARE_MEDIUM, FLARE_LOW, STUDIO_LOW], async (attempt, timeoutMs) => {
     timeouts.push(timeoutMs);
     c.advance(1000);
     throw new Error('higgsfield-submit-503');
-  }, { ...OPTS, deadline: 50000, now: c.now }));
+  }, { ...OPTS, deadline: 50000, now: c.now }), /higgsfield-submit-503/);
 
-  assert.deepEqual(timeouts, [28000, 28000, 48000]);
+  assert.deepEqual(timeouts, [50000, 49000, 48000]);
+});
+
+test('a slow attempt keeps running beside the next, and its cover wins if it comes first', async () => {
+  const signals = {};
+  const started = [];
+  const result = await runAttempts([FLARE_MEDIUM, FLARE_LOW], (attempt, timeoutMs, signal) => {
+    started.push(attempt);
+    signals[attempt.quality] = signal;
+    return new Promise((resolve) => setTimeout(resolve, attempt === FLARE_MEDIUM ? 60 : 200, 'https://cdn.example.com/' + attempt.quality + '.png'));
+  }, { ...OPTS, hedgeMs: 20, deadline: Date.now() + 50000 });
+
+  assert.deepEqual(started, [FLARE_MEDIUM, FLARE_LOW]);
+  assert.equal(result.attempt, FLARE_MEDIUM);
+  assert.equal(signals.low.aborted, true, 'the attempt that lost is told to stop');
+});
+
+test('the next attempt wins when the slow one is still going', async () => {
+  const result = await runAttempts([FLARE_MEDIUM, FLARE_LOW], (attempt) =>
+    new Promise((resolve) => setTimeout(resolve, attempt === FLARE_MEDIUM ? 300 : 20, attempt.quality)),
+  { ...OPTS, hedgeMs: 20, deadline: Date.now() + 50000 });
+
+  assert.equal(result.attempt, FLARE_LOW);
 });
 
 test('does not start an attempt that could not finish in time', async () => {
   const c = clock();
   const seen = [];
   await assert.rejects(
-    runAttempts([FLARE_MEDIUM, FLARE_LOW, STUDIO_LOW], async (attempt, timeoutMs) => {
+    runAttempts([FLARE_MEDIUM, FLARE_LOW, STUDIO_LOW], async (attempt) => {
       seen.push(attempt);
-      c.advance(timeoutMs);
+      c.advance(40000);
       throw new Error('higgsfield-timeout');
     }, { ...OPTS, deadline: 50000, now: c.now }),
     /higgsfield-timeout/
   );
-  // 28s for the first leaves 22s, enough for the second; after it nothing is left.
-  assert.deepEqual(seen, [FLARE_MEDIUM, FLARE_LOW]);
+  // 40s for the first leaves 10s, under the 15s minimum.
+  assert.deepEqual(seen, [FLARE_MEDIUM]);
+});
+
+test('fails with the last error once every attempt has failed', async () => {
+  const result = runAttempts([FLARE_MEDIUM, FLARE_LOW], (attempt) =>
+    new Promise((resolve, reject) => setTimeout(reject, attempt === FLARE_MEDIUM ? 80 : 30, new Error(attempt.quality + '-failed'))),
+  { ...OPTS, hedgeMs: 20, deadline: Date.now() + 50000 });
+
+  await assert.rejects(result, /medium-failed/);
 });
 
 test('reports running out of time when even the first attempt cannot start', async () => {
