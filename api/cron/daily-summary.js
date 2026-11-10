@@ -34,7 +34,7 @@ async function handler(req, res) {
     return res.status(200).json({ days: [], skipped: 'already-running' });
   }
   if (!days.length) console.log('[daily-summary] nothing due: already posted');
-  const late = days.filter((d) => !d.sent);
-  for (const d of late) console.warn('[daily-summary] ' + d.day + ' not sent right away (see above); it is not posted again');
-  return res.status(late.length ? 502 : 200).json({ days });
+  // A post Discord didn't take in time is saved and sent later (lib/discord.js).
+  for (const d of days.filter((d) => !d.sent)) console.warn('[daily-summary] ' + d.day + ' not sent right away (see above); it goes out later');
+  return res.status(200).json({ days });
 }
