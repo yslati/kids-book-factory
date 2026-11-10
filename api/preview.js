@@ -9,7 +9,8 @@
 // A free fix of a cover the parent reported (preview page, once per cover,
 // outside the daily allowance). Everything but the problem comes from that
 // cover's record (lib/preview-record.js), not from the browser:
-//   { fix_of: generation_id, fix_reason, fix_note? }
+//   { fix_of: generation_id, fix_reason, fix_note?, fix_name?, fix_rating? }
+// fix_name, with fix_reason 'name', is the name the cover should read.
 //   → { preview_url, generation_id, status: 'ready' }
 //   404 fix-unavailable (no record, e.g. an older cover), 409 fix-used
 //
@@ -21,6 +22,7 @@
 //   { action: 'cart', generation_id, occasion?, details?,
 //     variant }                                                → 204
 //   { action: 'problem', generation_id, reason, note? }        → 204
+//   { action: 'rating', generation_id, rating }                → 204
 //
 // Flow:
 //   1. Verify origin + the one-time preview pass from /upload-url (else a
@@ -54,9 +56,10 @@ import { savePreviews } from '../lib/user-previews.js';
 import { newGenerationId, previewKey } from '../lib/object-names.js';
 import { coverForStorage } from '../lib/cover-image.js';
 import { withReporting } from '../lib/report.js';
-import { announcePreview, postPreviewDetails } from '../lib/preview-feed.js';
-import { appendRows, previewFollowUp, previewRow, problemText, TABS, updateRow } from '../lib/sheet.js';
-import { claimDetailsPost, claimFix, readPreviewRecord, releaseFix, savePreviewRecord } from '../lib/preview-record.js';
+import { visitorOf } from '../lib/discord.js';
+import { announcePreview, postPreviewDetails, postPreviewRating, postShareClick } from '../lib/preview-feed.js';
+import { appendRows, previewFollowUp, previewRow, problemText, shareRow, TABS, updateRow } from '../lib/sheet.js';
+import { claimDetailsPost, claimFix, claimRatingPost, claimSharePost, readPreviewRecord, releaseFix, savePreviewRecord } from '../lib/preview-record.js';
 import { countPreview } from '../lib/visitor-counts.js';
 import { countEvent } from '../lib/event-stats.js';
 import { waitUntil } from '@vercel/functions';
@@ -83,11 +86,44 @@ async function followUp(req, res, body) {
   if (!limited.success) return res.status(429).json({ error: 'rate-limited' });
   res.status(204).end();
   waitUntil(updateRow(TABS.previews, value.generationId, value.fields));
-  if (body.action === 'cart' && value.details) waitUntil(postDetails(req, value));
+  if (body.action === 'cart') waitUntil(postDetails(req, value));
+  if (body.action === 'share') waitUntil(recordShare(req, value));
+  if (body.action === 'rating') waitUntil(postRating(req, value.generationId, value.fields.Rating));
 }
 
-// The extra details card in #previews: only for a cover this backend made,
-// and only once per generation.
+// The rating card in #previews: only for a cover this backend made, once per
+// rating per generation.
+async function postRating(req, generationId, rating) {
+  try {
+    const redis = getRedis();
+    const record = await readPreviewRecord(redis, generationId);
+    if (!record || !(await claimRatingPost(redis, generationId, rating))) return;
+    await postPreviewRating(req, record, { generationId, rating });
+  } catch (e) {
+    console.warn('[preview] rating card not posted:', (e && e.message) || e);
+  }
+}
+
+// A share button press: counted, a Shares row, and a #previews card once per
+// button per generation (only for a cover this backend made).
+async function recordShare(req, value) {
+  try {
+    const redis = getRedis();
+    const record = await readPreviewRecord(redis, value.generationId);
+    await Promise.all([
+      countEvent(redis, 'share_clicked'),
+      appendRows(TABS.shares, [shareRow({
+        Event: 'Share clicked', Via: value.via, Child: (record && record.childName) || '', Book: (record && record.bookTitle) || '', Generation: value.generationId
+      }, visitorOf(req))])
+    ]);
+    if (record && (await claimSharePost(redis, value.generationId, value.via))) await postShareClick(req, record, value);
+  } catch (e) {
+    console.warn('[preview] share not recorded:', (e && e.message) || e);
+  }
+}
+
+// The add-to-cart card in #previews, with the occasion and extra details:
+// only for a cover this backend made, and only once per generation.
 async function postDetails(req, value) {
   try {
     const redis = getRedis();
@@ -190,20 +226,19 @@ async function handler(req, res) {
 }
 
 // The free fix: one per cover, its photo, book, name and age read back from
-// the cover's record. The claim is given back when generation fails.
+// the cover's record. The claim is given back when generation fails. It
+// doesn't count against the free previews: each fix needs a cover that did.
 async function fixPreview(req, res, body, startedAt) {
   const fixOf = String(body.fix_of || '').trim();
   const reason = String(body.fix_reason || '');
   const note = String(body.fix_note || '').replace(/\s+/g, ' ').trim().slice(0, MAX_FIX_NOTE_CHARS);
+  const rating = [1, 2, 3, 4, 5].includes(body.fix_rating) ? body.fix_rating : 0;
+  const fixName = reason === 'name' ? String(body.fix_name || '').replace(/\s+/g, ' ').trim().slice(0, 40) : '';
   if (!/^[A-Za-z0-9-]{1,64}$/.test(fixOf)) return res.status(400).json({ error: 'bad-generation-id' });
   if (!Object.prototype.hasOwnProperty.call(FIX_REASONS, reason)) return res.status(400).json({ error: 'bad-reason' });
 
   const redis = getRedis();
   if (!redis) return res.status(503).json({ error: 'fix-unavailable' });
-  // The per-IP backstop still applies, so fixes can't be farmed from one machine.
-  const capped = await checkRateLimit(req, 'preview-ip-cap');
-  if (!capped.success) return res.status(429).json({ error: 'rate-limited', remaining: 0 });
-
   const record = await readPreviewRecord(redis, fixOf);
   const language = record && resolveBookLanguage(record.language);
   if (!record || !record.photoKey || !record.themeId || !language) {
@@ -212,18 +247,20 @@ async function fixPreview(req, res, body, startedAt) {
   // A fix's own cover can't be fixed again.
   if (record.fixOf || !(await claimFix(redis, fixOf))) return res.status(409).json({ error: 'fix-used' });
 
-  waitUntil(updateRow(TABS.previews, fixOf, { 'Reported problem': problemText(reason, note) }));
+  // The corrected name goes in the problem too, so the sheet and #previews show it.
+  const problemNote = fixName ? 'should be "' + fixName + '"' : note;
+  waitUntil(updateRow(TABS.previews, fixOf, { 'Reported problem': problemText(reason, problemNote) }));
   const ok = await runPreview(req, res, {
     themeId: record.themeId,
     photoKey: record.photoKey,
     generationId: newGenerationId(),
-    childName: record.childName || '',
+    childName: fixName || record.childName || '',
     ageText: record.age || '',
     language,
     customer: verifyCustomerToken(body),
     startedAt,
     remaining: null,
-    fix: { of: fixOf, reason, note }
+    fix: { of: fixOf, reason, note: problemNote, rating, link: record.link || '' }
   });
   if (!ok) {
     try { await releaseFix(redis, fixOf); } catch (e) { /* the parent just can't retry */ }
@@ -251,7 +288,7 @@ async function runPreview(req, res, p) {
     customerId: customer.valid ? customer.customerId : null,
     startedAt,
     counts,
-    fix: fix ? { of: fix.of, problem: problemText(fix.reason, fix.note) } : null
+    fix: fix ? { of: fix.of, problem: problemText(fix.reason, fix.note), rating: fix.rating, link: fix.link } : null
   });
   const record = (outcome) => waitUntil(appendRows(TABS.previews, [previewRow(req, {
     book: themeId,
@@ -335,8 +372,10 @@ async function runPreview(req, res, p) {
       }))
       .catch((e) => console.warn('[preview] record not saved:', (e && e.message) || e)));
     feed.done({ coverUrl: previewUrl, bookTitle: book.title, attempt: generated.attempt, temporary: previewUrl === generatedUrl });
+    // The first cover's row points at its fix.
+    if (fix) waitUntil(updateRow(TABS.previews, fix.of, { 'Fixed cover': previewUrl }));
     record({ coverUrl: previewUrl, bookTitle: book.title, attempt: generated.attempt, prompt });
-    waitUntil(countEvent(getRedis(), 'preview_ready'));
+    waitUntil(countEvent(getRedis(), 'preview_ready', themeId));
     res.status(200).json({
       preview_url: previewUrl,
       generation_id: generationId,
