@@ -283,7 +283,11 @@ test('a share click names the button', () => {
 test('a search becomes a Searches row', () => {
   const out = storefrontRows({ name: 'search_submitted', search: { query: 'unicorn', results: 0 } }, { visit: null, source: { label: 'direct', campaign: '' } }, visitor);
   assert.equal(out.tab, TABS.searches);
-  assert.deepEqual(without(out.rows[0], 'Date'), { Search: 'unicorn', Results: 0, Source: 'direct', ...PLACE });
+  assert.equal(out.rows[0].Where, 'Search page');
+  assert.deepEqual(without(without(out.rows[0], 'Where'), 'Page', 'Date'), { Search: 'unicorn', Results: 0, Source: 'direct', ...PLACE });
+  const inCollection = storefrontRows({ name: 'search_submitted', path: '/collections/boys', search: { query: 'dragon', results: 2, collection: 'Boys' } }, null, visitor);
+  assert.equal(inCollection.rows[0].Where, 'Boys collection');
+  assert.ok(inCollection.rows[0].Page.endsWith('/collections/boys'));
   assert.equal(storefrontRows({ name: 'search_submitted' }, null, visitor), null, 'no row without a term');
 });
 
