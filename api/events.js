@@ -7,6 +7,9 @@
 // and orders to #events (lib/event-feed.js) and adds them to the requests
 // sheet (lib/sheet.js).
 //
+// Also takes the theme's { event: 'chat_opened', ... } (snippets/kb-chat.liquid)
+// from the store's own pages, posted to #chat (lib/chat-feed.js).
+//
 // Body: text/plain JSON, shaped as lib/storefront-events.js describes → 204,
 // sent before any counting or posting, which run after the response.
 //
@@ -15,7 +18,7 @@
 // withReporting, so junk requests can't flood #logs.
 
 import { waitUntil } from '@vercel/functions';
-import { allowedHosts, applyCors } from '../lib/cors.js';
+import { allowedHosts, applyCors, isOriginAllowed } from '../lib/cors.js';
 import { getRedis } from '../lib/redis.js';
 import { visitorOf } from '../lib/discord.js';
 import { normaliseEvent } from '../lib/storefront-events.js';
@@ -23,15 +26,18 @@ import { cookielessId, recordEvent, saveJourney } from '../lib/event-stats.js';
 import { postLiveEvent } from '../lib/event-feed.js';
 import { appendRows, storefrontRows } from '../lib/sheet.js';
 import { orderWebhookOn } from '../lib/shopify-order.js';
+import { chatOpened, postChatOpened } from '../lib/chat-feed.js';
 
 // A visitor sends a few events per page; this only stops a flood.
 const LIMIT_WINDOW_MS = 10 * 60 * 1000;
 const LIMIT_EVENTS = 300;
+// Chat alerts: a few per visitor, so a loop can't flood #chat.
+const LIMIT_CHATS = 5;
 const recent = new Map();
 
 const OWN_HOSTS = allowedHosts();
 
-function overLimit(ip) {
+function overLimit(ip, max = LIMIT_EVENTS) {
   const now = Date.now();
   const entry = recent.get(ip);
   if (!entry || now >= entry.resetAt) {
@@ -42,7 +48,7 @@ function overLimit(ip) {
     return false;
   }
   entry.count++;
-  return entry.count > LIMIT_EVENTS;
+  return entry.count > max;
 }
 
 async function record(event, visitor) {
@@ -75,6 +81,16 @@ export default async function handler(req, res) {
   if (typeof body === 'string') {
     try { body = JSON.parse(body); } catch (e) { body = null; }
   }
+  const chat = chatOpened(body);
+  if (chat) {
+    if (!isOriginAllowed(req)) return res.status(403).json({ error: 'forbidden-origin' });
+    const visitor = visitorOf(req);
+    if (overLimit('chat:' + visitor.ip, LIMIT_CHATS)) return res.status(429).json({ error: 'rate-limited' });
+    res.status(204).end();
+    waitUntil(postChatOpened(chat, visitor).catch((e) => console.error('[events] chat alert failed:', (e && e.stack) || e)));
+    return;
+  }
+
   const event = normaliseEvent(body);
   if (!event) return res.status(400).json({ error: 'bad-event' });
 

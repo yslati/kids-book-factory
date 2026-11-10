@@ -255,6 +255,27 @@ test('preview page follow-ups become sheet fields', () => {
   assert.deepEqual(previewFollowUp({ action: 'cart', generation_id: 'k3x9p2m7q1' }).value.fields, { 'Added to cart': 'Yes' });
 });
 
+test('a reported problem becomes a sheet field', () => {
+  assert.deepEqual(previewFollowUp({ action: 'problem', generation_id: 'k3x9p2m7q1', reason: 'name', note: ' the J\nis missing ' }).value.fields,
+    { 'Reported problem': 'Name is wrong: the J is missing' });
+  assert.deepEqual(previewFollowUp({ action: 'problem', generation_id: 'k3x9p2m7q1', reason: 'likeness' }).value.fields,
+    { 'Reported problem': "Doesn't look like my child" });
+  assert.deepEqual(previewFollowUp({ action: 'problem', generation_id: 'k3x9p2m7q1', reason: 'toString' }), { error: 'bad-reason' });
+});
+
+test('a cover rating becomes a sheet field', () => {
+  assert.deepEqual(previewFollowUp({ action: 'rating', generation_id: 'k3x9p2m7q1', rating: 4 }).value.fields, { Rating: 4 });
+  assert.deepEqual(previewFollowUp({ action: 'rating', generation_id: 'k3x9p2m7q1', rating: 6 }), { error: 'bad-rating' });
+  assert.deepEqual(previewFollowUp({ action: 'rating', generation_id: 'k3x9p2m7q1', rating: '5' }), { error: 'bad-rating' });
+});
+
+test('a free fix row names the cover it fixes and the problem', () => {
+  const row = previewRow(req, book({ fix: { of: 'a1b2c3d4e5', reason: 'head', note: '' } }), { coverUrl: COVER, bookTitle: 'The Winning Goal', attempt: ATTEMPT, prompt: 'FIX...' });
+  assert.equal(row['Fix of'], 'a1b2c3d4e5');
+  assert.equal(row['Reported problem'], 'Head or face looks off');
+  assert.equal(previewRow(req, book(), { coverUrl: COVER }).hasOwnProperty('Fix of'), false);
+});
+
 test('extra details become a one-line sheet field', () => {
   assert.deepEqual(previewFollowUp({ action: 'details', generation_id: 'k3x9p2m7q1', details: '  Loves dinosaurs,\n a dog called Biscuit ' }).value.fields,
     { 'Extra details': 'Loves dinosaurs, a dog called Biscuit' });

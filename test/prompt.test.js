@@ -2,7 +2,9 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_PREVIEW_PROMPT, MAX_HERO_POSE_CHARS, buildPreviewPrompt, withHeroPose } from '../lib/prompt.js';
+import {
+  DEFAULT_PREVIEW_PROMPT, FIX_REASONS, MAX_FIX_NOTE_CHARS, MAX_HERO_POSE_CHARS, buildPreviewPrompt, withFix, withHeroPose
+} from '../lib/prompt.js';
 import { BOOK_LANGUAGES, resolveBookLanguage } from '../lib/book-languages.js';
 
 // Higgsfield's Marketing Studio endpoints reject longer prompts.
@@ -58,6 +60,27 @@ test('the longest default prompt an order can produce fits the provider limit', 
     age: '18'
   });
   assert.ok(prompt.length <= PROVIDER_PROMPT_LIMIT, `prompt is ${prompt.length} characters`);
+  // A free fix adds its line on top, with or without the parent's words.
+  for (const reason of Object.keys(FIX_REASONS)) {
+    for (const note of ['', 'n'.repeat(MAX_FIX_NOTE_CHARS)]) {
+      const fixed = withFix(prompt, { reason, note }, 'x'.repeat(40));
+      assert.ok(fixed.length <= PROVIDER_PROMPT_LIMIT, `${reason} fix is ${fixed.length} characters`);
+    }
+  }
+});
+
+test('a free fix puts the reported problem first', () => {
+  assert.equal(withFix('BASE', { reason: 'name', note: '' }, 'Jack'),
+    'FIX: the name was wrong last time. Write "Jack" exactly, letter for letter, with no apostrophe or extra letters.\n\nBASE');
+  assert.match(withFix('BASE', { reason: 'hair_skin', note: 'his hair is "dark"\nbrown' }, 'Jack'),
+    /^FIX: the hair or skin was wrong.* The parent adds: "his hair is dark brown"\n\nBASE$/);
+  assert.match(withFix('BASE', { reason: 'other', note: 'the dog is missing' }, 'Jack'),
+    /^FIX: the parent says the last cover was wrong: "the dog is missing"\. Look again and fix what does not match the photo\.\n\nBASE$/);
+  assert.match(withFix('BASE', { reason: 'other', note: '' }, 'Jack'), /^FIX: .*fix what does not match the photo\.\n\nBASE$/);
+  assert.equal(withFix('BASE', { reason: 'nope' }, 'Jack'), 'BASE');
+  // A name fix generates with the corrected name and repeats it as the note.
+  assert.match(withFix('BASE', { reason: 'name', note: 'should be "Jakob"' }, 'Jakob'),
+    /^FIX: .*Write "Jakob" exactly.* The parent adds: "should be Jakob"\n\nBASE$/);
 });
 
 test('puts the book\'s hero pose first and caps its length', () => {
