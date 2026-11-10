@@ -4,7 +4,7 @@
 // name it "Discord events", paste this file, set Customer privacy →
 // Permission to "Not required" (so every visitor is tracked), Save, Connect.
 //
-// Sends page, product and collection views, searches, cart views,
+// Sends page, product and collection views, site and collection searches, cart views,
 // add-to-carts, checkout starts and orders to the backend's /events
 // (api/events.js). Only paths, campaign tags, search terms, titles, prices
 // and quantities leave the pixel: never customer details, other query
@@ -56,9 +56,27 @@ function withCheckout(event) {
 
 analytics.subscribe('page_viewed', (event) => send(base(event)));
 analytics.subscribe('collection_viewed', (event) => send(base(event)));
+
+// The store page a site search was started from, or '' from elsewhere.
+function searchedFrom(document) {
+  try {
+    const referrer = new URL(document.referrer);
+    return referrer.host === document.location.host ? referrer.pathname : '';
+  } catch (e) {
+    return '';
+  }
+}
+
 analytics.subscribe('search_submitted', (event) => {
   const result = event.data.searchResult || {};
-  send({ ...base(event), search: { query: result.query, results: (result.productVariants || []).length } });
+  send({ ...base(event), search: { query: result.query, results: (result.productVariants || []).length, from: searchedFrom(event.context.document) } });
+});
+
+// The collection page's search box filters in the browser, so the theme
+// (sections/kb-collection-grid.liquid) publishes its searches as this event.
+analytics.subscribe('kb_collection_search', (event) => {
+  const data = event.customData || {};
+  send({ ...base(event), event: 'search_submitted', search: { query: data.query, results: data.results, collection: data.collection } });
 });
 analytics.subscribe('cart_viewed', (event) => send(base(event)));
 

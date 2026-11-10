@@ -154,4 +154,13 @@ test('each search posts to #searches, linked to its results; no results stands o
   assert.equal(f.Source, '`google.com`');
   assert.equal(posts[1].fields.find((x) => x.name === 'Results').value, '⚠️ none');
   assert.equal(searchLink('unicorn (pink)'), '[unicorn (pink)](' + STORE + '/search?q=unicorn%20%28pink%29)');
+  assert.equal(f.Where, 'Search page');
+
+  posts.length = 0;
+  await postLiveEvent({ ...search('dragon', 2), search: { query: 'dragon', results: 2, from: '/collections/girls' } }, null, { userAgent: '', requestId: 'x' });
+  await postLiveEvent({ ...search('dragon', 2), path: '/fr/collections/boys', search: { query: 'dragon', results: 2, collection: 'Garçons' } }, null, { userAgent: '', requestId: 'x' });
+  const whereOf = (post, name) => post.fields.find((x) => x.name === name).value;
+  assert.equal(whereOf(posts[0], 'Where'), 'Search page, from [/collections/girls](' + STORE + '/collections/girls)');
+  assert.equal(whereOf(posts[1], 'Where'), '[Garçons collection](' + STORE + '/fr/collections/boys)');
+  assert.equal(whereOf(posts[1], 'Search'), '[dragon](' + STORE + '/fr/collections/boys?q=dragon)');
 });
