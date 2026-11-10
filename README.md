@@ -82,7 +82,8 @@ The backend posts to Discord channels through their incoming webhooks, one envir
 | Channel | Variable | Feed | Posts |
 | --- | --- | --- | --- |
 | #logs | `DISCORD_WEBHOOK_LOGS` | `lib/report.js` | API and storefront warnings and errors |
-| #previews | `DISCORD_WEBHOOK_PREVIEWS` | `lib/preview-feed.js` | every preview: the photo, then the cover |
+| #previews | `DISCORD_WEBHOOK_PREVIEWS` | `lib/preview-feed.js` | every preview: the photo, then the cover; the parent's rating and any free fix |
+| #chat | `DISCORD_WEBHOOK_CHAT` | `lib/chat-feed.js` | a visitor opening the storefront chat, with their cover, rating and a Shopify Inbox link |
 | #visits | `DISCORD_WEBHOOK_VISITS` | `lib/event-feed.js` | each new visit live |
 | #searches | `DISCORD_WEBHOOK_SEARCHES` | `lib/event-feed.js` | each storefront search live: the term (linked to its results), the result count (no results stands out), source, location and device |
 | #events | `DISCORD_WEBHOOK_EVENTS` | `lib/event-feed.js` | add-to-carts, checkouts and orders live, plus a daily summary |
