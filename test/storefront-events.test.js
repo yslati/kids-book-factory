@@ -86,7 +86,11 @@ test('the pixel sends the same campaign parameters the backend keeps', () => {
 
 test('a search keeps its term and result count, nothing else', () => {
   const event = normaliseEvent({ event: 'search_submitted', clientId: 'c1', path: '/search', search: { query: '  unicorn ', results: 3, email: 'x@y.z' } });
-  assert.deepEqual(event.search, { query: 'unicorn', results: 3 });
+  assert.deepEqual(event.search, { query: 'unicorn', results: 3, collection: '', from: '' });
+  const inCollection = normaliseEvent({ event: 'search_submitted', clientId: 'c1', path: '/collections/boys', search: { query: 'dragon', results: 2, collection: ' Boys ' } });
+  assert.deepEqual(inCollection.search, { query: 'dragon', results: 2, collection: 'Boys', from: '' });
+  const fromPage = normaliseEvent({ event: 'search_submitted', clientId: 'c1', path: '/search', search: { query: 'dragon', results: 2, from: '/collections/boys?name=Mia' } });
+  assert.equal(fromPage.search.from, '/collections/boys', 'its query is dropped');
   assert.equal(normaliseEvent({ event: 'search_submitted', clientId: 'c1', path: '/search', search: { query: '' } }).search, undefined);
   assert.equal(normaliseEvent({ event: 'page_viewed', clientId: 'c1', path: '/', search: { query: 'x' } }).search, undefined, 'only on searches');
 });
