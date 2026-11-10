@@ -3,7 +3,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { announcePreview, postPreviewDetails } from '../lib/preview-feed.js';
+import { announcePreview, postPreviewDetails, postPreviewRating, ratingLabel } from '../lib/preview-feed.js';
 import { resetDiscordThrottle, setDiscordOutbox } from '../lib/discord.js';
 
 const WEBHOOK = 'https://discord.com/api/webhooks/2/previews-token';
@@ -237,6 +237,33 @@ test('the add-to-cart card carries the occasion and extra details, linked to the
   assert.equal(card.url, link);
   assert.deepEqual(card.thumbnail, { url: COVER });
   assert.deepEqual(fieldsOf(card), { Cover: 'Hardcover', Occasion: 'A birthday', 'Extra details': 'Has a dog, Biscuit everyone', Generation: '`k3x9p2m7q1`' });
+});
+
+test('the rating card shows the face and rating, linked to the photo', async (t) => {
+  withWebhook(t, WEBHOOK);
+  const calls = stubDiscord(t);
+  const link = 'https://discord.com/channels/999/222/111';
+  await postPreviewRating(req, { childName: 'Emma', age: '5', bookTitle: 'The Winning Goal', coverUrl: COVER, link },
+    { generationId: 'k3x9p2m7q1', rating: 2 });
+  const [card] = posts(calls);
+  assert.equal(card.title, '😕 Emma, 5 · The Winning Goal');
+  assert.equal(card.url, link);
+  assert.deepEqual(fieldsOf(card), { Rating: '😕 2/5 · Not quite', Generation: '`k3x9p2m7q1`' });
+  assert.equal(ratingLabel(6), '');
+});
+
+test('a free fix card names the problem and rating and links the first cover', async (t) => {
+  withWebhook(t, WEBHOOK);
+  const calls = stubDiscord(t);
+  const link = 'https://discord.com/channels/999/222/111';
+  announcePreview(req, preview({ fix: { of: 'a1b2c3d4e5', problem: 'Head or face looks off', rating: 1, link } }));
+  await new Promise((r) => setTimeout(r, 20));
+  const [card] = posts(calls);
+  assert.equal(card.author.name, 'Free fix requested');
+  const f = fieldsOf(card);
+  assert.equal(f.Problem, 'Head or face looks off');
+  assert.equal(f.Rating, '😞 1/5 · Not right');
+  assert.equal(f['Fix of'], '[first cover](' + link + ')');
 });
 
 test('no details card while the channel has no webhook', async (t) => {

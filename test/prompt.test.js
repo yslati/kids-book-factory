@@ -75,9 +75,12 @@ test('a free fix puts the reported problem first', () => {
   assert.match(withFix('BASE', { reason: 'hair_skin', note: 'his hair is "dark"\nbrown' }, 'Jack'),
     /^FIX: the hair or skin was wrong.* The parent adds: "his hair is dark brown"\n\nBASE$/);
   assert.match(withFix('BASE', { reason: 'other', note: 'the dog is missing' }, 'Jack'),
-    /^FIX: the parent says the last cover was wrong: "the dog is missing"\n\nBASE$/);
+    /^FIX: the parent says the last cover was wrong: "the dog is missing"\. Look again and fix what does not match the photo\.\n\nBASE$/);
   assert.match(withFix('BASE', { reason: 'other', note: '' }, 'Jack'), /^FIX: .*fix what does not match the photo\.\n\nBASE$/);
   assert.equal(withFix('BASE', { reason: 'nope' }, 'Jack'), 'BASE');
+  // A name fix generates with the corrected name and repeats it as the note.
+  assert.match(withFix('BASE', { reason: 'name', note: 'should be "Jakob"' }, 'Jakob'),
+    /^FIX: .*Write "Jakob" exactly.* The parent adds: "should be Jakob"\n\nBASE$/);
 });
 
 test('puts the book\'s hero pose first and caps its length', () => {
