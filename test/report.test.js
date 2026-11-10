@@ -446,3 +446,81 @@ test('storefront embed layout: context fields, page and redacted stack', () => {
   assert.equal(fields['Signed in'], '`false`');
   assert.equal(fields.IP, '`203.0.113.7`');
 });
+
+// Discord and the requests sheet both stubbed: { posts, rows } as each gets them.
+function captureDiscordAndSheet(t) {
+  const posts = captureDiscord(t);
+  const env = { SHEET_WEBHOOK_URL: process.env.SHEET_WEBHOOK_URL, SHEET_WEBHOOK_SECRET: process.env.SHEET_WEBHOOK_SECRET };
+  process.env.SHEET_WEBHOOK_URL = 'https://script.google.com/macros/s/test/exec';
+  process.env.SHEET_WEBHOOK_SECRET = 'sheet-secret';
+  const discordFetch = globalThis.fetch;
+  const rows = [];
+  globalThis.fetch = async (url, init = {}) => {
+    if (!String(url).startsWith('https://script.google.com/')) return discordFetch(url, init);
+    const body = JSON.parse(init.body);
+    rows.push(...body.rows.map((row) => ({ tab: body.tab, ...row })));
+    return Response.json({ ok: true });
+  };
+  t.after(() => {
+    for (const [key, value] of Object.entries(env)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  return { posts, rows };
+}
+
+test('each report is also added to the sheet\'s Logs tab, without the child\'s details', async (t) => {
+  const { posts, rows } = captureDiscordAndSheet(t);
+  const handler = reported(async (req, res) => {
+    console.error('[preview] failed:', new Error('NoSuchKey: ' + JSON.parse(req.body).photo_key));
+    return res.status(502).json({ error: 'generation-failed' });
+  });
+  await handler(mockReq({
+    body: JSON.stringify({
+      theme_id: 'the-winning-goal',
+      photo_key: 'photos/emma_5_en_k3x9p2m7q1.jpg',
+      generation_id: 'k3x9p2m7q1',
+      child_name: 'Emma',
+      customer_token: 'f'.repeat(64)
+    })
+  }), mockRes());
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.equal(posts.length, 1);
+  assert.equal(rows.length, 1);
+  const row = rows[0];
+  assert.equal(row.tab, 'Logs');
+  assert.equal(row.Source, 'API');
+  assert.equal(row.Level, 'Error');
+  assert.equal(row.Where, 'POST /api/preview');
+  assert.equal(row.Status, 502);
+  assert.equal(row.Code, 'generation-failed');
+  assert.equal(row.Book, 'the-winning-goal');
+  assert.equal(row.Generation, 'k3x9p2m7q1');
+  assert.equal(row.Country, 'France');
+  assert.match(row.Details, /ERROR \[preview\] failed: Error: NoSuchKey: photos\/…/);
+  const saved = JSON.stringify(row);
+  assert.ok(!/emma/i.test(saved), saved);
+  assert.ok(!saved.includes('f'.repeat(64)));
+});
+
+test('storefront reports and the muted notice are added to the Logs tab too', async (t) => {
+  const { rows } = captureDiscordAndSheet(t);
+  reportClientEvent(mockReq({ url: '/log' }), normaliseClientEvent({
+    code: 'cart-add-failed',
+    level: 'warn',
+    message: 'cart',
+    page: '/pages/create-your-book',
+    context: { status: 422 }
+  }));
+  reportClientLimit(mockReq({ url: '/log', headers: { 'x-forwarded-for': '198.51.100.40' } }));
+  await new Promise((resolve) => setTimeout(resolve, 10));
+
+  assert.deepEqual(rows.map((r) => [r.Source, r.Level, r.Where, r.Code]), [
+    ['Storefront', 'Warning', '/pages/create-your-book', 'cart-add-failed'],
+    ['Storefront', 'Warning', '', 'reports-muted']
+  ]);
+  assert.equal(rows[0].Details, 'cart\nStatus: 422');
+  assert.equal(rows[1].Status, 429);
+});
