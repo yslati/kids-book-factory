@@ -28,5 +28,5 @@ async function handler(req, res) {
     return res.status(200).json({ skipped: 'already-ran' });
   }
   if (!result.posted) console.warn('[higgsfield-check] not every message went out right away; they are sent later');
-  return res.status(result.posted ? 200 : 502).json(result);
+  return res.status(200).json(result);
 }
