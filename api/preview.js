@@ -4,9 +4,10 @@
 // Body: { theme_id, photo_key, generation_id, child_name, age, language, turnstile_token?,
 //         customer_id?, token_date?, customer_token? }
 // → { preview_url, generation_id, status: 'ready', remaining }
-// → { generation_id, status: 'queued', remaining } when the Higgsfield job is
-//   still queued or running at the budget; GET /preview-status/<id> then
-//   finishes it (lib/queued-preview.js)
+// → { generation_id, status: 'queued', remaining, queue_position? } when the
+//   Higgsfield job is still running at the budget, or still waiting for a
+//   slot after a few seconds (queue_position is then its place in line);
+//   GET /preview-status/<id> then finishes it (lib/queued-preview.js)
 // 429 → { error: 'rate-limited', login_required, remaining: 0 }
 //
 // A free fix of a cover the parent reported (preview page, once per cover,
@@ -316,8 +317,9 @@ async function runPreview(req, res, p) {
     return true;
   } catch (err) {
     if (err && err.pending) {
-      if (await queueCover(req, p, { book, prompt, feed, counts, pending: err.pending })) {
-        res.status(200).json({ generation_id: generationId, status: 'queued', remaining: p.remaining });
+      const place = await queueCover(req, p, { book, prompt, feed, counts, pending: err.pending });
+      if (place) {
+        res.status(200).json({ generation_id: generationId, status: 'queued', remaining: p.remaining, ...place });
         return true;
       }
       err = new Error('higgsfield-timeout');
@@ -337,17 +339,17 @@ async function runPreview(req, res, p) {
 }
 
 // Leaves a cover whose job is still running for /preview-status to finish.
-// false when it can't be stored: the job is then cancelled if still queued,
-// and the preview fails as a timeout.
+// Resolves { queue_position? }, or null when it can't be stored: the job is
+// then cancelled if still queued, and the preview fails as a timeout.
 async function queueCover(req, p, { book, prompt, feed, counts, pending }) {
   try {
     const [link, n] = await Promise.all([feed.link, counts]);
-    await queuePreview(getRedis(), req, p, { book, prompt, link, counts: n, pending });
-    console.info('[preview] queued: ' + attemptLabel(pending.attempt) + ' still running at the deadline');
-    return true;
+    const place = await queuePreview(getRedis(), req, p, { book, prompt, link, counts: n, pending });
+    console.info('[preview] queued: ' + attemptLabel(pending.attempt) + (pending.queued ? ' waiting for a slot' : ' still running at the deadline'));
+    return place;
   } catch (e) {
     console.warn('[preview] could not queue the cover:', (e && e.message) || e);
     await abandonPendingCover(pending);
-    return false;
+    return null;
   }
 }

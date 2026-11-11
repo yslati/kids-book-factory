@@ -1,8 +1,10 @@
 // GET /api/preview-status/<generation_id>
-// → { status: 'ready', preview_url } | { status: 'pending' } | { status: 'failed' }
+// → { status: 'ready', preview_url } | { status: 'pending', queue_position? }
+//   | { status: 'failed' }
 //
-// The storefront polls this every 2s after /preview answered 'queued': the
-// cover's Higgsfield job was still queued or running at /preview's budget.
+// The storefront polls this every 3s after /preview answered 'queued': the
+// cover's Higgsfield job was waiting for a slot, or still running at
+// /preview's budget. queue_position is there while it waits for a slot.
 // Each poll looks at the job once; the one that sees it end copies the cover
 // to R2 and records it like /preview does (lib/preview-finish.js), exactly
 // once (lib/queued-preview.js). An unknown or expired id is 'failed'.
