@@ -44,8 +44,9 @@ import { announceCustomStory, postCustomCart } from '../lib/custom-feed.js';
 import { appendRows, customRow, TABS, updateRow } from '../lib/sheet.js';
 import { claimCartPost, normaliseCart, normaliseGenerate, readCustomStory, saveCustomStory } from '../lib/custom-story.js';
 
-// vercel.json gives this function 60s; generation must finish within 50s.
-const GENERATION_BUDGET_MS = 50000;
+// vercel.json gives this function 75s; generation must finish within 60s
+// (the storefront waits 75s).
+const GENERATION_BUDGET_MS = 60000;
 
 export default withReporting(handler);
 
