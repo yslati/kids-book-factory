@@ -67,7 +67,7 @@ If `PREVIEW_TOKEN_SECRET` is unset the feature is simply off: every token is tre
 
 - `POST /api/upload-url` - validate + presign an R2 PUT.
 - `POST /api/preview` - resolve book → generate → store → return `preview_url`. Also takes the preview page's `{ action: 'occasion' | 'details' | 'cart' }` follow-ups for the [requests sheet](#requests-sheet).
-- `GET /api/preview-status/<id>` - resilience fallback (sync path returns `ready` directly).
+- `GET /api/preview-status/<id>` - polled by the product page after `/preview` answers `queued` (its Higgsfield job was still queued or running at the 60s budget, e.g. a third parent at once while the account runs two jobs). Each poll checks the job once; the one that sees it finish stores and records the cover like `/preview`, once (`lib/queued-preview.js`).
 - `POST /api/custom-story` - a cover for a story the catalog doesn't have (see [Custom stories](#custom-stories)), and its add-to-cart follow-up.
 - `POST /api/log` - storefront error reports, forwarded to Discord's #logs (see [Discord channels](#discord-channels)).
 - `POST /api/events` - storefront analytics from the Shopify custom pixel, for #events.

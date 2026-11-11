@@ -4,6 +4,9 @@
 // Body: { theme_id, photo_key, generation_id, child_name, age, language, turnstile_token?,
 //         customer_id?, token_date?, customer_token? }
 // → { preview_url, generation_id, status: 'ready', remaining }
+// → { generation_id, status: 'queued', remaining } when the Higgsfield job is
+//   still queued or running at the budget; GET /preview-status/<id> then
+//   finishes it (lib/queued-preview.js)
 // 429 → { error: 'rate-limited', login_required, remaining: 0 }
 //
 // A free fix of a cover the parent reported (preview page, once per cover,
@@ -33,8 +36,9 @@
 //      ordered chain of models until one returns a cover.
 //   4. Re-encode the cover as a JPEG (lib/cover-image.js) and persist it to R2
 //      (provider URLs are temporary), named
-//      previews/<name>_<age>_<language>_<book>_<id>.<ext> (lib/object-names.js).
-//   5. Return the permanent R2 url.
+//      previews/<name>_<age>_<language>_<book>_<id>.<ext> (lib/object-names.js),
+//      then record it (lib/preview-finish.js).
+//   5. Return the permanent R2 url, or 'queued' as above.
 // The photo, then the cover or the error, also go to Discord's #previews
 // channel (lib/preview-feed.js), and the answers, prompt and outcome to the
 // requests sheet's Book previews tab (lib/sheet.js).
@@ -44,22 +48,23 @@ import { verifyTurnstile } from '../lib/turnstile.js';
 import { redeemPreviewPass } from '../lib/preview-pass.js';
 import { getRedis } from '../lib/redis.js';
 import { checkRateLimit, clientIp } from '../lib/ratelimit.js';
-import { publicUrl, putObject, r2Configured } from '../lib/r2.js';
+import { r2Configured } from '../lib/r2.js';
 import { resolveBook, shopifyConfigured } from '../lib/shopify.js';
-import { generateCover, generationConfigured } from '../lib/generate.js';
+import { abandonPendingCover, generateCover, generationConfigured } from '../lib/generate.js';
 import { FIX_REASONS, MAX_FIX_NOTE_CHARS, buildPreviewPrompt, withFix } from '../lib/prompt.js';
 import { childPhotoUrl } from '../lib/child-photo.js';
 import { resolveBookLanguage } from '../lib/book-languages.js';
 import { verifyCustomerToken } from '../lib/customer-token.js';
 import { tagCustomerPreviewLimit } from '../lib/customer-tag.js';
-import { savePreviews } from '../lib/user-previews.js';
-import { newGenerationId, previewKey } from '../lib/object-names.js';
-import { coverForStorage } from '../lib/cover-image.js';
+import { newGenerationId } from '../lib/object-names.js';
 import { withReporting } from '../lib/report.js';
 import { visitorOf } from '../lib/discord.js';
 import { announcePreview, postPreviewDetails, postPreviewRating, postShareClick } from '../lib/preview-feed.js';
-import { appendRows, previewFollowUp, previewRow, problemText, shareRow, TABS, updateRow } from '../lib/sheet.js';
-import { claimDetailsPost, claimFix, claimRatingPost, claimSharePost, readPreviewRecord, releaseFix, savePreviewRecord } from '../lib/preview-record.js';
+import { appendRows, previewFollowUp, problemText, shareRow, TABS, updateRow } from '../lib/sheet.js';
+import { claimDetailsPost, claimFix, claimRatingPost, claimSharePost, readPreviewRecord, releaseFix } from '../lib/preview-record.js';
+import { failPreview, feedPreview, finishPreview } from '../lib/preview-finish.js';
+import { queuePreview } from '../lib/queued-preview.js';
+import { attemptLabel } from '../lib/provider-order.js';
 import { countPreview } from '../lib/visitor-counts.js';
 import { countEvent } from '../lib/event-stats.js';
 import { waitUntil } from '@vercel/functions';
@@ -269,7 +274,7 @@ async function fixPreview(req, res, body, startedAt) {
 }
 
 // Generates, stores and records one cover, then answers the request.
-// Resolves to true when the cover is ready.
+// Resolves to true when the cover is ready or queued.
 async function runPreview(req, res, p) {
   const { themeId, photoKey, generationId, childName, ageText, language, customer, startedAt, fix } = p;
   // Counted as generation starts, whether or not it succeeds.
@@ -278,105 +283,28 @@ async function runPreview(req, res, p) {
   // The daily summary's preview funnel (lib/event-stats.js).
   waitUntil(countEvent(getRedis(), 'preview_started'));
 
-  const photoUrl = publicUrl(photoKey);
-  const feed = announcePreview(req, {
-    photoUrl,
-    themeId,
-    generationId,
-    childName,
-    age: ageText,
-    language: language.name,
-    customerId: customer.valid ? customer.customerId : null,
-    startedAt,
-    counts,
-    fix: fix ? { of: fix.of, problem: problemText(fix.reason, fix.note), rating: fix.rating, link: fix.link } : null
-  });
-  const record = (outcome) => waitUntil(appendRows(TABS.previews, [previewRow(req, {
-    book: themeId,
-    childName,
-    age: ageText,
-    language: language.name,
-    photoUrl,
-    customerId: customer.valid ? customer.customerId : null,
-    generationId,
-    startedAt,
-    fix
-  }, outcome)]));
+  const feed = announcePreview(req, feedPreview(p, counts));
 
   let prompt = '';
+  let book = null;
   try {
     // 2. Resolve cover + prompt from the product's own metafields, while the
     //    photo is checked (and shrunk if full-size) for the generator.
-    const [book, childUrl] = await Promise.all([resolveBook(themeId), childPhotoUrl(photoKey)]);
+    let childUrl;
+    [book, childUrl] = await Promise.all([resolveBook(themeId), childPhotoUrl(photoKey)]);
     prompt = buildPreviewPrompt(book.prompt, { language, childName, age: ageText });
     if (fix) prompt = withFix(prompt, fix, childName);
 
-    // 3. Generate, falling back down the model chain on failure.
+    // 3. Generate, falling back down the model chain on failure. Only the
+    //    product page polls for a queued cover, and only with Redis to hold it.
     const generated = await generateCover(book.coverUrl, childUrl, prompt, {
       coverAspect: book.coverAspect,
-      deadline: startedAt + GENERATION_BUDGET_MS
+      deadline: startedAt + GENERATION_BUDGET_MS,
+      keepPending: !fix && Boolean(getRedis())
     });
-    const generatedUrl = generated.url;
 
-    // 4. Persist the generated cover to R2 (permanent).
-    let previewUrl = generatedUrl;
-    try {
-      const imgRes = await fetch(generatedUrl);
-      if (!imgRes.ok) throw new Error('cover-fetch-' + imgRes.status);
-      const cover = await coverForStorage(
-        Buffer.from(await imgRes.arrayBuffer()),
-        imgRes.headers.get('content-type')
-      );
-      const key = previewKey({
-        childName: childName,
-        age: ageText,
-        language: language.code,
-        bookTitle: book.title,
-        themeId: themeId,
-        id: generationId,
-        ext: cover.ext
-      });
-      previewUrl = await putObject(key, cover.body, cover.contentType);
-    } catch (storeErr) {
-      // If persistence fails, fall back to the (temporary) provider URL so the
-      // user still sees a preview; the order record should prefer the R2 copy.
-      console.warn('[preview] cover not stored, returning the provider URL:', (storeErr && storeErr.message) || storeErr);
-      previewUrl = generatedUrl;
-    }
-
-    // Record it against the account when the shopper is signed in, so their
-    // previews follow them to another device. Fire-and-forget: this is a
-    // convenience, and a Redis problem must never fail a paid generation.
-    if (customer.valid) {
-      try {
-        await savePreviews(customer.customerId, [{
-          // The key the theme stores this preview under, so the two merge.
-          k: 'kb-book-' + generationId,
-          // The product handle. The display slug that goes in ?b= is built in
-          // the theme, so the client fills `book` in when it syncs.
-          themeId: themeId,
-          bookTitle: book.title || '',
-          childName: childName,
-          age: ageText,
-          coverUrl: previewUrl,
-          createdAt: new Date().toISOString()
-        }]);
-      } catch (e) { /* never surfaces */ }
-    }
-
-    // The extra details card and the free fix read this; a Redis problem must
-    // never fail a paid cover.
-    waitUntil(Promise.resolve(feed.link)
-      .then((link) => savePreviewRecord(getRedis(), generationId, {
-        childName, age: ageText, bookTitle: book.title || '', coverUrl: previewUrl, link: link || '',
-        themeId, photoKey, language: language.code, fixOf: fix ? fix.of : ''
-      }))
-      .catch((e) => console.warn('[preview] record not saved:', (e && e.message) || e)));
-    feed.done({ coverUrl: previewUrl, bookTitle: book.title, attempt: generated.attempt, temporary: previewUrl === generatedUrl });
-    // The first cover's row points at its fix.
-    if (fix) waitUntil(updateRow(TABS.previews, fix.of, { 'Fixed cover': previewUrl }));
-    record({ coverUrl: previewUrl, bookTitle: book.title, attempt: generated.attempt, prompt });
-    waitUntil(countEvent(getRedis(), 'preview_ready', themeId));
+    // 4. Persist and record it.
+    const previewUrl = await finishPreview(req, p, { book, generated, prompt, feed });
     res.status(200).json({
       preview_url: previewUrl,
       generation_id: generationId,
@@ -387,18 +315,39 @@ async function runPreview(req, res, p) {
     });
     return true;
   } catch (err) {
+    if (err && err.pending) {
+      if (await queueCover(req, p, { book, prompt, feed, counts, pending: err.pending })) {
+        res.status(200).json({ generation_id: generationId, status: 'queued', remaining: p.remaining });
+        return true;
+      }
+      err = new Error('higgsfield-timeout');
+    }
     const code = (err && err.message) || 'preview-failed';
     // Log the real error to the server (vercel dev terminal) for diagnosis.
     console.error('[preview] failed:', err && err.stack ? err.stack : err);
     const detail = String((err && err.message) || err);
-    feed.done({ error: detail });
-    record({ error: detail, prompt });
-    waitUntil(countEvent(getRedis(), 'preview_failed'));
+    failPreview(req, p, { error: detail, prompt, feed });
     if (code === 'product-not-found' || code === 'prompt-missing' || code === 'cover-missing') {
       res.status(422).json({ error: code, status: 'failed', detail });
     } else {
       res.status(502).json({ error: 'generation-failed', status: 'failed', detail });
     }
+    return false;
+  }
+}
+
+// Leaves a cover whose job is still running for /preview-status to finish.
+// false when it can't be stored: the job is then cancelled if still queued,
+// and the preview fails as a timeout.
+async function queueCover(req, p, { book, prompt, feed, counts, pending }) {
+  try {
+    const [link, n] = await Promise.all([feed.link, counts]);
+    await queuePreview(getRedis(), req, p, { book, prompt, link, counts: n, pending });
+    console.info('[preview] queued: ' + attemptLabel(pending.attempt) + ' still running at the deadline');
+    return true;
+  } catch (e) {
+    console.warn('[preview] could not queue the cover:', (e && e.message) || e);
+    await abandonPendingCover(pending);
     return false;
   }
 }
