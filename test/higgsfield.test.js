@@ -2,7 +2,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { nearestAspectRatio, generateWithHiggsfield, higgsfieldConfigured, failureDetail } from '../lib/higgsfield.js';
+import { nearestAspectRatio, generateWithHiggsfield, higgsfieldConfigured, failureDetail, readHiggsfieldJob } from '../lib/higgsfield.js';
 
 const FLARE_MEDIUM = { model: 'marketing-studio/image/flare', quality: 'medium' };
 const STATUS_URL = 'https://api.higgsfield.ai/requests/req-1/status';
@@ -147,4 +147,51 @@ test('gives up at the timeout and asks Higgsfield to cancel', async (t) => {
   const last = calls[calls.length - 1];
   assert.equal(last.url, CANCEL_URL);
   assert.equal(last.init.method, 'POST');
+});
+
+test('with keepPending, leaves a job running at the timeout for later instead of cancelling it', async (t) => {
+  withKey(t);
+  const calls = stubFetch(t, (url) => {
+    if (url === STATUS_URL) return json({ status: 'in_progress', request_id: 'req-1' });
+    return json({ status: 'queued', request_id: 'req-1', status_url: STATUS_URL, cancel_url: CANCEL_URL });
+  });
+  await assert.rejects(
+    generateWithHiggsfield('https://c/cover.jpg', 'https://c/child.jpg', 'p', { ...FLARE_MEDIUM, timeoutMs: 2000, keepPending: true }),
+    (err) => {
+      assert.equal(err.message, 'higgsfield-pending');
+      assert.deepEqual(err.job, { statusUrl: STATUS_URL, cancelUrl: CANCEL_URL, queued: false });
+      return true;
+    }
+  );
+  assert.equal(calls.some((c) => c.url === CANCEL_URL), false);
+});
+
+test('with keepPending, hands over a job still waiting for a slot well before the timeout', async (t) => {
+  withKey(t);
+  stubFetch(t, (url) => url === STATUS_URL
+    ? json({ status: 'queued', request_id: 'req-1' })
+    : json({ status: 'queued', request_id: 'req-1', status_url: STATUS_URL, cancel_url: CANCEL_URL }));
+  const started = Date.now();
+  await assert.rejects(
+    generateWithHiggsfield('https://c/cover.jpg', 'https://c/child.jpg', 'p', { ...FLARE_MEDIUM, timeoutMs: 30000, keepPending: true }),
+    (err) => {
+      assert.equal(err.message, 'higgsfield-pending');
+      assert.equal(err.job.queued, true);
+      return true;
+    }
+  );
+  assert.ok(Date.now() - started < 10000);
+});
+
+test('one look at a job: queued or running, the image once done, a throw when it failed', async (t) => {
+  withKey(t);
+  let status = { status: 'queued' };
+  stubFetch(t, () => json(status));
+  assert.deepEqual(await readHiggsfieldJob(STATUS_URL, { model: FLARE_MEDIUM.model }), { queued: true });
+  status = { status: 'in_progress' };
+  assert.deepEqual(await readHiggsfieldJob(STATUS_URL, { model: FLARE_MEDIUM.model }), { queued: false });
+  status = { status: 'completed', images: [{ url: 'https://cdn/cover.png' }] };
+  assert.deepEqual(await readHiggsfieldJob(STATUS_URL, { model: FLARE_MEDIUM.model }), { url: 'https://cdn/cover.png' });
+  status = { status: 'failed', request_id: 'req-1' };
+  await assert.rejects(readHiggsfieldJob(STATUS_URL, { model: FLARE_MEDIUM.model }), /higgsfield-failed/);
 });

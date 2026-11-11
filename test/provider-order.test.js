@@ -107,6 +107,19 @@ test('does not start an attempt that could not finish in time', async () => {
   assert.deepEqual(seen, [FLARE_MEDIUM]);
 });
 
+test('a job left running at the deadline ends the chain', async () => {
+  const seen = [];
+  const pending = Object.assign(new Error('higgsfield-pending'), { pending: { statusUrl: 'https://s' } });
+  await assert.rejects(
+    runAttempts([FLARE_MEDIUM, FLARE_LOW], async (attempt) => {
+      seen.push(attempt);
+      throw pending;
+    }, { ...OPTS, deadline: 60000, now: () => 0 }),
+    (err) => err === pending
+  );
+  assert.deepEqual(seen, [FLARE_MEDIUM]);
+});
+
 test('reports running out of time when even the first attempt cannot start', async () => {
   await assert.rejects(
     runAttempts([FLARE_MEDIUM], async () => 'never', { ...OPTS, deadline: 10000, now: () => 0 }),

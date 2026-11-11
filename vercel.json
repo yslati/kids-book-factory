@@ -8,7 +8,7 @@
       "maxDuration": 15
     },
     "api/preview-status/[id].js": {
-      "maxDuration": 15
+      "maxDuration": 40
     },
     "api/me/previews.js": {
       "maxDuration": 15
