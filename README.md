@@ -17,7 +17,7 @@ POST /api/preview     → redeem preview pass (else Turnstile) + rate-limit → 
 - **Anti-tamper:** the browser never sends the prompt or cover; the backend reads them from the product's metafields by `theme_id`. New product → no backend change.
 - **One challenge per preview:** Turnstile tokens are single-use, so once `/upload-url` has verified the visitor's token it grants a one-time pass for the `generation_id` it issues (Upstash, 15 min, `lib/preview-pass.js`; not the `photo_key`, which carries the child's name). `/preview` redeems it with `GETDEL` instead of needing a second token mid-generation, so one solve still buys exactly one preview. When no pass can be stored (`UPSTASH_*` unset, a Redis error), `/upload-url` returns `preview_pass: false` and the theme sends a fresh `turnstile_token` with `/preview`, verified as usual.
 - **Book languages:** `en`, `es`, `fr`, `de`, `it`, and `pt`. The preview API rejects other values and asks the image model to translate visible cover text into the selected language.
-- **Synchronous**, `maxDuration` 60s; generation must finish within 50s of the request. Generated cover persisted to R2 (provider URLs are temporary).
+- **Synchronous**, `maxDuration` 75s; generation must finish within 60s of the request. Generated cover persisted to R2 (provider URLs are temporary).
 - Missing env vars degrade to `503 *-not-configured`; Turnstile + rate-limiting no-op until configured.
 
 ## Image generation
@@ -31,9 +31,9 @@ POST /api/preview     → redeem preview pass (else Turnstile) + rate-limit → 
 | 3 | Higgsfield | `marketing-studio/image` (Marketing Studio 2.0) | `low` | 17–19s | $0.057 |
 
 - All three take the same `[cover, child]` pair at `1k`, at the supported aspect ratio nearest the cover's (`lib/higgsfield.js`). Higgsfield's prompt enhancement stays off, so the name and language rules reach the model unchanged.
-- Sunburst replaces the child's name everywhere on the cover more reliably than Flare, which in tests left the old name on caps and jerseys. About 1 in 4 Sunburst covers takes longer than 28s, and Flare then makes the cover.
+- Sunburst replaces the child's name everywhere on the cover more reliably than Flare, which in tests left the old name on caps and jerseys. Sunburst takes 22-35s once Higgsfield starts it; Flare makes the cover only when Sunburst fails.
 - Prices: Sunburst and Flare are billed by tokens and Higgsfield reports no per-request cost, so their figures are estimates from the published rates; they rise a little with prompt length. 2.0's is Higgsfield's exact quote for the default prompt. `POST https://api.higgsfield.ai/estimate/<endpoint>` returns a free quote for any request body.
-- Time: generation must finish within 50s of the request. Every attempt but the last is capped at 28s, and none starts with less than 15s left. A job cut off after Higgsfield started it may still be billed.
+- Time: generation must finish within 60s of the request (`maxDuration` 75s; the storefront waits 70-75s). Each attempt may use all the time left and the next starts only when it fails; none starts with less than 15s left. Measured 2026-11-10/11: the account runs two jobs at once, a third waits in Higgsfield's queue (40-50s), and a job Higgsfield has started can't be cancelled (`400 Request is in progress`): it runs to the end and is billed. Cutting a slow Sunburst off at 28s therefore left it running and made the Flare that replaced it queue behind it.
 - Higgsfield is the only provider, so an empty Higgsfield balance (submit returns `403`) means no previews. Keep it topped up.
 - Covers come back as PNG (~1.7–2 MB). Before they go to R2, `lib/cover-image.js` re-encodes them with sharp as a progressive JPEG (quality 88, 4:4:4 chroma, sRGB, metadata stripped): ~340–450 KB, with no visible difference at 1024px. If that fails, the PNG is stored as-is, so a paid cover is never lost.
 - Logs name the attempt behind each cover, e.g. `[generate] cover by higgsfield marketing-studio/image/sunburst medium`; each failed attempt logs a `[generate] … failed:` warning first.
@@ -47,9 +47,9 @@ Free previews cost real money, so the allowance is tiered. All windows are 24h s
 
 | Tier | Keyed by | `/preview` | `/upload-url` |
 | --- | --- | --- | --- |
-| Anonymous | IP | 3 | 6 |
-| Verified customer | customer id | 3 | 8 |
-| Backstop (everyone, incl. logged in) | IP | 8 | — |
+| Anonymous | IP | 5 | 10 |
+| Verified customer | customer id | 8 | 14 |
+| Backstop (everyone, incl. logged in) | IP | 12 | — |
 
 **How a customer is verified.** The theme has no way to authenticate to this backend, so it proves identity with a shared secret instead: it signs `"{customer_id}:{YYYY-MM-DD}"` (UTC) with Liquid's `hmac_sha256` filter and posts `{ customer_id, token_date, customer_token }` in the `/upload-url` and `/preview` bodies. `lib/customer-token.js` recomputes the digest and compares it in constant time. Only the digest is ever rendered into the DOM - never the secret. Tokens dated within one day either side of UTC today are accepted. That absorbs both a page rendered before midnight rolled over, and Shopify's `date` filter emitting the *shop's* local date (which for a shop ahead of UTC can read as UTC-tomorrow).
 
@@ -136,7 +136,7 @@ The storefront's "Dream up their story" page (theme `sections/kb-custom-story.li
 `POST /api/custom-story` paints a cover for a story the catalog doesn't have. The photo goes up through `/upload-url` as usual, and its one-time pass covers this call.
 
 - **Reference cover:** the theme sends one of our product handles (picked per world and boy/girl in the section's settings), and the backend reads that product's cover from Shopify, so the model keeps the series' look and layout while the scene, title and tagline come from the parent's idea (`lib/custom-prompt.js`). The child's pose and expression come from that moment of the story, not from the photo, and only the hero has the child's face. The parent's text is quoted as a description, never as instructions; covers stay child-safe, and named characters become original ones.
-- **Limits:** 3 custom covers per IP (or per signed-in customer) per 24h, plus the per-IP backstop shared with `/preview` (8 a day across both). Same model chain and cost as a preview.
+- **Limits:** 3 custom covers per IP (or per signed-in customer) per 24h, plus the per-IP backstop shared with `/preview` (12 a day across both). Same model chain and cost as a preview.
 - **Storage:** the cover is `previews/<name>_<age>_en_custom-<world>_<id>.jpg` in R2, and `kbf:custom:<id>` in Upstash keeps the name, world and cover for 30 days so the add-to-cart card (`{ action: 'cart' }`) can only be posted for a real cover, once.
 
 ### #higgsfield: the generation account
@@ -207,4 +207,4 @@ Shopify-side setup (page handle `create-your-book`, Cover variants, `book.*` met
 
 ## Cost
 
-Vercel/R2/Upstash/Turnstile free tiers + Higgsfield: about $0.02–0.04 per preview when the main model answers, up to ~$0.13 when all three attempts run and are billed. The tiered limits above cap the worst case at 8 previews/day per IP, i.e. ~$0.25 normally and ~$1 at most.
+Vercel/R2/Upstash/Turnstile free tiers + Higgsfield: about $0.02–0.04 per preview when the main model answers, up to ~$0.13 when all three attempts run and are billed. The tiered limits above cap the worst case at 12 previews/day per IP, i.e. ~$0.40 normally and ~$1.60 at most.

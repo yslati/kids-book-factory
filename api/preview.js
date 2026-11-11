@@ -64,9 +64,10 @@ import { countPreview } from '../lib/visitor-counts.js';
 import { countEvent } from '../lib/event-stats.js';
 import { waitUntil } from '@vercel/functions';
 
-// vercel.json gives this function 60s. Generation must finish within 50s of
-// the request arriving, leaving time to copy the cover to R2 and respond.
-const GENERATION_BUDGET_MS = 50000;
+// vercel.json gives this function 75s. Generation must finish within 60s of
+// the request arriving, leaving time to copy the cover to R2 and respond
+// before the storefront stops waiting (70s on the product page).
+const GENERATION_BUDGET_MS = 60000;
 
 // Both limiters return null when limiting is disabled; only compare real numbers.
 function minRemaining(a, b) {

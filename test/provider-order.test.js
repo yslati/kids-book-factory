@@ -11,7 +11,7 @@ const FLARE_LOW = { provider: 'higgsfield', model: 'marketing-studio/image/flare
 const STUDIO_LOW = { provider: 'higgsfield', model: 'marketing-studio/image', quality: 'low' };
 const FAL = { provider: 'fal' };
 const CHAIN = [FLARE_MEDIUM, FLARE_LOW, STUDIO_LOW, FAL];
-const OPTS = { attemptCapMs: 28000, minAttemptMs: 15000 };
+const OPTS = { minAttemptMs: 15000 };
 
 test('labels name the provider, model and quality that are set', () => {
   assert.equal(attemptLabel(FLARE_MEDIUM), 'higgsfield marketing-studio/image/flare medium');
@@ -65,19 +65,19 @@ test('falls down the chain in order until an attempt succeeds', async () => {
   assert.equal(result.attempt, STUDIO_LOW);
 });
 
-test('caps every attempt but the last, which gets whatever is left', async () => {
+test('each attempt may use all the time left', async () => {
   const c = clock();
   const timeouts = [];
   await assert.rejects(runAttempts([FLARE_MEDIUM, FLARE_LOW, STUDIO_LOW], async (attempt, timeoutMs) => {
     timeouts.push(timeoutMs);
     c.advance(1000);
     throw new Error('higgsfield-submit-503');
-  }, { ...OPTS, deadline: 50000, now: c.now }));
+  }, { ...OPTS, deadline: 60000, now: c.now }), /higgsfield-submit-503/);
 
-  assert.deepEqual(timeouts, [28000, 28000, 48000]);
+  assert.deepEqual(timeouts, [60000, 59000, 58000]);
 });
 
-test('does not start an attempt that could not finish in time', async () => {
+test('a slow attempt is never replaced: the next starts only after a failure', async () => {
   const c = clock();
   const seen = [];
   await assert.rejects(
@@ -85,11 +85,26 @@ test('does not start an attempt that could not finish in time', async () => {
       seen.push(attempt);
       c.advance(timeoutMs);
       throw new Error('higgsfield-timeout');
-    }, { ...OPTS, deadline: 50000, now: c.now }),
+    }, { ...OPTS, deadline: 60000, now: c.now }),
     /higgsfield-timeout/
   );
-  // 28s for the first leaves 22s, enough for the second; after it nothing is left.
-  assert.deepEqual(seen, [FLARE_MEDIUM, FLARE_LOW]);
+  // The first used the whole budget, so nothing else could start.
+  assert.deepEqual(seen, [FLARE_MEDIUM]);
+});
+
+test('does not start an attempt that could not finish in time', async () => {
+  const c = clock();
+  const seen = [];
+  await assert.rejects(
+    runAttempts([FLARE_MEDIUM, FLARE_LOW], async (attempt) => {
+      seen.push(attempt);
+      c.advance(50000);
+      throw new Error('higgsfield-failed');
+    }, { ...OPTS, deadline: 60000, now: c.now }),
+    /higgsfield-failed/
+  );
+  // 50s for the first leaves 10s, under the 15s minimum.
+  assert.deepEqual(seen, [FLARE_MEDIUM]);
 });
 
 test('reports running out of time when even the first attempt cannot start', async () => {
