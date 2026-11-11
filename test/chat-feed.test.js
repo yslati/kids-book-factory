@@ -2,7 +2,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chatEmbed, chatOpened } from '../lib/chat-feed.js';
+import { chatEmbed, chatOpened, inboxLink } from '../lib/chat-feed.js';
 
 const visitor = { country: 'GB', region: '', city: 'London', timezone: 'Europe/London', userAgent: '', requestId: 'r1' };
 
@@ -14,6 +14,15 @@ test('a chat opening is read from the storefront body', () => {
   assert.equal(chatOpened({ event: 'chat_opened', path: 'https://evil.example/' }), null);
   assert.equal(chatOpened({ event: 'page_viewed', path: '/' }), null);
   assert.equal(chatOpened(null), null);
+});
+
+test('the Inbox link opens the store\'s Inbox sales channel', (t) => {
+  const saved = process.env.SHOPIFY_SHOP;
+  t.after(() => { if (saved === undefined) delete process.env.SHOPIFY_SHOP; else process.env.SHOPIFY_SHOP = saved; });
+  process.env.SHOPIFY_SHOP = 'eytisc-0a.myshopify.com';
+  assert.equal(inboxLink(), '[Shopify Inbox](https://admin.shopify.com/store/eytisc-0a/apps/shopify-inbox/shopify_chat)');
+  process.env.SHOPIFY_SHOP = 'evil.example.com';
+  assert.equal(inboxLink(), 'Shopify Inbox');
 });
 
 test('the chat card names the child, the cover rating and where to reply', () => {
