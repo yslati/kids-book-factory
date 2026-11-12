@@ -34,6 +34,14 @@ test('quotes the idea as a description and names the world, occasion, child and 
   assert.match(prompt, /choose them for this story, not from the reference/);
 });
 
+test('writes the title and tagline in the book language, English by default', () => {
+  assert.match(buildCustomPrompt(request), /Write the title and the tagline in English,/);
+  const prompt = buildCustomPrompt({ ...request, language: { code: 'es', name: 'Spanish' } });
+  assert.match(prompt, /for example the Spanish for "LINA AND THE \.\.\."\)/);
+  assert.match(prompt, /Write the title and the tagline in Spanish, with correct spelling and accents\./);
+  assert.doesNotMatch(prompt, /in English/);
+});
+
 test('leaves out the occasion and age when they are empty', () => {
   const prompt = buildCustomPrompt({ ...request, occasion: '', age: '', gender: 'boy' });
   assert.match(prompt, /Story world: Bedtime & kindness\.\n/);
@@ -46,7 +54,7 @@ test('a quote in the name cannot break the title line', () => {
 });
 
 test('stays under the provider limit with the longest idea and name', () => {
-  const prompt = buildCustomPrompt({ ...request, brief: 'x'.repeat(MAX_BRIEF), childName: 'W'.repeat(24), world: 'adventure' });
+  const prompt = buildCustomPrompt({ ...request, brief: 'x'.repeat(MAX_BRIEF), childName: 'W'.repeat(24), world: 'adventure', language: { code: 'pt', name: 'Portuguese' } });
   assert.ok(prompt.length < PROVIDER_PROMPT_LIMIT, prompt.length + ' characters');
 });
 

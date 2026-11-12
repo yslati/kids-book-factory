@@ -24,9 +24,9 @@ import { visitorOf } from '../lib/discord.js';
 import { normaliseEvent } from '../lib/storefront-events.js';
 import { cookielessId, recordEvent, saveJourney } from '../lib/event-stats.js';
 import { postLiveEvent } from '../lib/event-feed.js';
-import { appendRows, storefrontRows } from '../lib/sheet.js';
+import { appendRows, chatRow, storefrontRows, TABS } from '../lib/sheet.js';
 import { orderWebhookOn } from '../lib/shopify-order.js';
-import { chatOpened, postChatOpened } from '../lib/chat-feed.js';
+import { chatOpened, chatRecord, postChatOpened } from '../lib/chat-feed.js';
 
 // A visitor sends a few events per page; this only stops a flood.
 const LIMIT_WINDOW_MS = 10 * 60 * 1000;
@@ -87,7 +87,10 @@ export default async function handler(req, res) {
     const visitor = visitorOf(req);
     if (overLimit('chat:' + visitor.ip, LIMIT_CHATS)) return res.status(429).json({ error: 'rate-limited' });
     res.status(204).end();
-    waitUntil(postChatOpened(chat, visitor).catch((e) => console.error('[events] chat alert failed:', (e && e.stack) || e)));
+    waitUntil(chatRecord(chat).then((record) => Promise.all([
+      postChatOpened(chat, visitor, record).catch((e) => console.error('[events] chat alert failed:', (e && e.stack) || e)),
+      appendRows(TABS.chats, [chatRow(chat, visitor, record)])
+    ])));
     return;
   }
 

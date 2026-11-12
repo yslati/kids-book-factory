@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  appendRows, customRow, dailyRow, previewFollowUp, previewRow, sheetConfigured, storefrontRows, TABS, updateRow
+  appendRows, chatRow, customRow, dailyRow, previewFollowUp, previewRow, sheetConfigured, storefrontRows, TABS, updateRow, weeklyRow
 } from '../lib/sheet.js';
 import { resetDiscordThrottle, setDiscordOutbox } from '../lib/discord.js';
 
@@ -116,7 +116,7 @@ test('a failed preview keeps the prompt and the error, without cover or model', 
 
 test('a Custom stories row names the world, hero, idea and reference book', () => {
   const row = customRow(req, {
-    world: 'stem', gender: 'girl', childName: 'Lina', age: '6', occasion: 'A birthday',
+    world: 'stem', gender: 'girl', childName: 'Lina', age: '6', occasion: 'A birthday', language: { code: 'fr', name: 'French' },
     brief: 'Lina fixes a robot on the moon.', reference: 'girl-astronaut', photoKey: 'photos/x.jpg',
     photoUrl: PHOTO, customerId: null, generationId: 'c1', startedAt: Date.now() - 19000
   }, { coverUrl: COVER, attempt: ATTEMPT, prompt: 'Custom prompt' });
@@ -126,6 +126,7 @@ test('a Custom stories row names the world, hero, idea and reference book', () =
     Hero: 'Girl',
     "Child's name": 'Lina',
     Age: 6,
+    Language: 'French',
     Occasion: 'A birthday',
     'Story idea': 'Lina fixes a robot on the moon.',
     'Extra details': '',
@@ -241,6 +242,34 @@ test('a Daily row has the funnel, revenue and top lists', () => {
   const mixed = dailyRow({ day: '2026-10-25', visitors: 0, count: {}, pages: {}, sources: {}, countries: {}, revenue: { USD: 10, EUR: 5 }, orderSources: {} });
   assert.equal(mixed.Revenue, '10 USD + 5 EUR');
   assert.equal(mixed.Currency, 'USD, EUR');
+});
+
+test('a Weekly row has the same totals as a day, under its week', () => {
+  const row = weeklyRow({ from: '2026-10-12', to: '2026-10-18', visitors: 400, count: { visits: 500, checkout_completed: 3 }, revenue: { USD: 120 } });
+  assert.equal(row.Week, '2026-10-12 to 2026-10-18');
+  assert.equal(row.Day, undefined);
+  assert.equal(row.Visitors, 400);
+  assert.equal(row.Orders, 3);
+  assert.equal(row.Revenue, 120);
+  assert.equal(Object.keys(row)[0], 'Week');
+});
+
+test('a Chats row names the page, the child and where to reply', (t) => {
+  const saved = process.env.SHOPIFY_SHOP;
+  process.env.SHOPIFY_SHOP = 'eytisc-0a.myshopify.com';
+  t.after(() => { if (saved === undefined) delete process.env.SHOPIFY_SHOP; else process.env.SHOPIFY_SHOP = saved; });
+  const chat = { path: '/pages/create-your-book', generationId: 'k3x9p2m7q1', rating: 2, conversationId: '0123456789ab' };
+  const row = chatRow(chat, visitor, { childName: 'Emma', age: '5', bookTitle: 'The Winning Goal' });
+  assert.equal(row.Child, 'Emma, 5');
+  assert.equal(row.Book, 'The Winning Goal');
+  assert.ok(row['Cover rating']);
+  assert.equal(row['Reply in Inbox'], 'https://inbox.shopify.com/store/eytisc-0a/conversations/open/0123456789ab');
+  assert.equal(row.Generation, 'k3x9p2m7q1');
+  assert.match(row.Page, /\/pages\/create-your-book$/);
+  assert.equal(row.Country, 'France');
+  const plain = chatRow({ path: '/', generationId: '', rating: 0, conversationId: '' }, visitor, null);
+  assert.equal(plain.Child, '');
+  assert.equal(plain['Cover rating'], '');
 });
 
 test('preview page follow-ups become sheet fields', () => {

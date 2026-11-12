@@ -26,8 +26,14 @@ test('accepts a complete request in a fixed shape', () => {
     childName: 'Lina',
     age: '5',
     occasion: 'A new baby',
-    brief: 'Lina throws a kindness parade for the new girl next door.'
+    brief: 'Lina throws a kindness parade for the new girl next door.',
+    language: { code: 'en', name: 'English' }
   });
+});
+
+test('the book language is one of the six, English when the page sends none', () => {
+  assert.deepEqual(normaliseGenerate({ ...body, language: 'ES' }).value.language, { code: 'es', name: 'Spanish' });
+  assert.equal(normaliseGenerate({ ...body, language: 'nl' }).error, 'unsupported-language');
 });
 
 test('age and occasion are optional; an odd age is dropped', () => {

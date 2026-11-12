@@ -6,7 +6,7 @@
 // Vercel's Hobby plan caps a deployment at 12.
 //
 // Generate body: { photo_key, generation_id, reference, world, gender,
-//   child_name, age?, occasion?, brief, turnstile_token?, customer_id?,
+//   child_name, age?, occasion?, language?, brief, turnstile_token?, customer_id?,
 //   token_date?, customer_token? }
 //   → { preview_url, generation_id, status: 'ready' }
 //   429 → { error: 'rate-limited', login_required, remaining: 0 }
@@ -20,7 +20,7 @@
 //   3. Generate through the same model chain as previews (lib/generate.js)
 //      with the custom prompt (lib/custom-prompt.js).
 //   4. Re-encode and store the cover in R2 as
-//      previews/<name>_<age>_en_custom-<world>_<id>.jpg.
+//      previews/<name>_<age>_<language>_custom-<world>_<id>.jpg.
 // Everything the parent sent, then the cover or the error, goes to Discord's
 // #custom-generation channel (lib/custom-feed.js) and, with the prompt, to
 // the requests sheet's Custom stories tab (lib/sheet.js).
@@ -145,7 +145,7 @@ async function generate(req, res, body, startedAt) {
       const key = previewKey({
         childName: r.childName,
         age: r.age,
-        language: 'en',
+        language: r.language.code,
         bookTitle: 'custom ' + r.world,
         themeId: 'custom',
         id: r.generationId,

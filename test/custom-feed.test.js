@@ -96,6 +96,7 @@ test('posts every answer with the photo, then the cover linked to it', async (t)
   assert.equal(f.Name, '`Lina`');
   assert.equal(f.Age, '5');
   assert.equal(f.Occasion, 'A new baby');
+  assert.equal(f.Language, 'English');
   assert.equal(f['Reference cover'], '[the-kindness-parade](https://booktokids.com/products/the-kindness-parade)');
   assert.equal(f.Customer, 'anonymous');
   assert.equal(f.Generation, '`k3x9p2m7q1`');
