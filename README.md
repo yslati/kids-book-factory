@@ -87,7 +87,8 @@ The backend posts to Discord channels through their incoming webhooks, one envir
 | #visits | `DISCORD_WEBHOOK_VISITS` | `lib/event-feed.js` | each new visit live |
 | #searches | `DISCORD_WEBHOOK_SEARCHES` | `lib/event-feed.js` | each storefront search live: the term (linked to its results), the result count (no results stands out), source, location and device |
 | #events | `DISCORD_WEBHOOK_EVENTS` | `lib/event-feed.js` | add-to-carts, checkouts and orders live, plus a daily summary |
-| #higgsfield | `DISCORD_WEBHOOK_HIGGSFIELD` | `lib/higgsfield-feed.js` | Higgsfield alerts live, plus a daily account check |
+| #higgsfield | `DISCORD_WEBHOOK_HIGGSFIELD` | `lib/higgsfield-feed.js` | Higgsfield alerts live, plus a daily account check with spend and an estimated balance (`HIGGSFIELD_BALANCE_USD` + `HIGGSFIELD_BALANCE_AT`, the console amount and when it was read) |
+| #fal | `DISCORD_WEBHOOK_FAL` | `lib/fal-feed.js` | a daily fal account check: balance and its change, spend per endpoint, runway (needs a full-access `FAL_KEY`) |
 | #custom-generation | `DISCORD_WEBHOOK_CUSTOM` | `lib/custom-feed.js` | every custom story request: the answers and photo, the cover, the add-to-cart |
 
 ### #logs: error reports

@@ -28,6 +28,9 @@
     "api/cron/higgsfield.js": {
       "maxDuration": 30
     },
+    "api/cron/fal.js": {
+      "maxDuration": 30
+    },
     "api/share.js": {
       "maxDuration": 10
     },
@@ -94,6 +97,10 @@
     },
     {
       "path": "/api/cron/higgsfield",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/fal",
       "schedule": "0 7 * * *"
     }
   ]
