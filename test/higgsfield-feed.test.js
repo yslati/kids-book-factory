@@ -3,7 +3,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { checkMessages, jobOutcome, trackHiggsfieldJob } from '../lib/higgsfield-feed.js';
+import { balanceAnchor, checkMessages, jobOutcome, trackHiggsfieldJob } from '../lib/higgsfield-feed.js';
 import { resetDiscordThrottle, setDiscordOutbox } from '../lib/discord.js';
 
 const FLARE = { provider: 'higgsfield', model: 'marketing-studio/image/flare', quality: 'medium' };
@@ -113,4 +113,35 @@ test('an out-of-credits refusal alerts once an hour for the whole account', asyn
   await trackHiggsfieldJob(null, ALPHA, refused, 300);
   await trackHiggsfieldJob(null, FLARE, new Error('higgsfield-failed'), 300);
   assert.deepEqual(titles, ['💸 Out of credits']);
+});
+
+test('the daily check shows spend and an estimated balance', () => {
+  const usage = { rows: [
+    { day: '2026-10-21', name: 'marketing-studio/image/sunburst', quantity: 3, cost: 0.21 },
+    { day: '2026-10-21', name: 'marketing-studio/image/flare', quantity: 1, cost: 0.07 },
+    { day: '2026-10-18', name: 'marketing-studio/image/sunburst', quantity: 10, cost: 0.70 },
+    { day: '2026-09-30', name: 'marketing-studio/image/sunburst', quantity: 10, cost: 5 }
+  ] };
+  const balance = { anchor: 10, at: new Date('2026-10-15T09:30:00Z'), spent: 0.98 };
+  const embed = checkMessages(input({ usage, balance })).embeds[0];
+  assert.match(fieldValue(embed, 'Spent the day before (UTC)'), /sunburst.*\$0\.21[\s\S]*Total \$0\.28/);
+  assert.equal(fieldValue(embed, 'Last 7 days').startsWith('$0.98'), true);
+  assert.equal(fieldValue(embed, 'Last 30 days'), '$5.98');
+  assert.match(fieldValue(embed, 'Balance'), /≈ \$9\.02 left[\s\S]*≈ 64 days/);
+});
+
+test('the balance asks for the console amount when none is set, and flags a short runway', () => {
+  const unset = checkMessages(input()).embeds[0];
+  assert.match(fieldValue(unset, 'Balance'), /HIGGSFIELD_BALANCE_USD/);
+  const usage = { rows: [{ day: '2026-10-21', name: 'm', quantity: 7, cost: 7 }] };
+  const low = checkMessages(input({ usage, balance: { anchor: 5, at: new Date('2026-10-01T00:00:00Z'), spent: 1 } })).embeds[0];
+  assert.match(fieldValue(low, 'Balance'), /⚠️ Lasts ≈ 4 days/);
+  const broken = checkMessages(input({ usage: { error: 'higgsfield-usage-500' } })).embeds[0];
+  assert.match(fieldValue(broken, 'Spend'), /unreachable/);
+});
+
+test('balance anchors need both a number and a time', () => {
+  assert.deepEqual(balanceAnchor({ HIGGSFIELD_BALANCE_USD: '12.5', HIGGSFIELD_BALANCE_AT: '2026-11-13T10:00:00Z' }), { anchor: 12.5, at: new Date('2026-11-13T10:00:00Z') });
+  assert.equal(balanceAnchor({ HIGGSFIELD_BALANCE_USD: '12.5' }), null);
+  assert.equal(balanceAnchor({ HIGGSFIELD_BALANCE_USD: 'x', HIGGSFIELD_BALANCE_AT: '2026-11-13' }), null);
 });
