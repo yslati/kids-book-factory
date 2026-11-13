@@ -83,7 +83,7 @@ test('posts every answer with the photo, then the cover linked to it', async (t)
   withWebhook(t, WEBHOOK);
   const calls = stubDiscord(t);
   const feed = announceCustomStory(req, request());
-  await feed.done({ coverUrl: COVER, attempt: { provider: 'higgsfield', model: 'marketing-studio/image/flare', quality: 'medium' }, temporary: false });
+  await feed.done({ coverUrl: COVER, attempt: { provider: 'higgsfield', model: 'marketing-studio/image/flare', quality: 'medium' }, stored: 'r2' });
 
   const [ask, cover] = posts(calls);
   assert.equal(calls[0].url, WEBHOOK + '?wait=true');

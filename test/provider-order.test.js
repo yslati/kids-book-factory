@@ -133,3 +133,9 @@ test('throws when there is nothing to try', async () => {
     /no-provider-configured/
   );
 });
+
+test('an attempt may answer { url, cost } and the cost is kept', async () => {
+  const result = await runAttempts([FLARE_MEDIUM], async () => ({ url: 'data:image/jpeg;base64,AAAA', cost: 0.0712 }),
+    { ...OPTS, deadline: Date.now() + 50000 });
+  assert.deepEqual(result, { url: 'data:image/jpeg;base64,AAAA', cost: 0.0712, attempt: FLARE_MEDIUM });
+});

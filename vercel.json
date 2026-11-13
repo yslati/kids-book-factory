@@ -22,20 +22,17 @@
     "api/shopify-webhook.js": {
       "maxDuration": 30
     },
-    "api/cron/daily-summary.js": {
-      "maxDuration": 30
-    },
-    "api/cron/higgsfield.js": {
-      "maxDuration": 30
-    },
-    "api/cron/fal.js": {
-      "maxDuration": 30
+    "api/cover.js": {
+      "maxDuration": 10
     },
     "api/share.js": {
       "maxDuration": 10
     },
     "api/custom-story.js": {
       "maxDuration": 75
+    },
+    "api/cron/[job].js": {
+      "maxDuration": 60
     }
   },
   "rewrites": [
@@ -102,6 +99,14 @@
     {
       "path": "/api/cron/fal",
       "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/openai",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/covers",
+      "schedule": "0 5 * * *"
     }
   ]
 }
