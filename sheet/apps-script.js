@@ -24,7 +24,7 @@ const TAB_COLORS = {
   Logs: '#999999'
 };
 // A new column goes right after its neighbour when the tab has it, else at the end.
-const PLACE_AFTER = { Language: 'Age' };
+const PLACE_AFTER = { Language: 'Age', Cost: 'Model' };
 // Column widths in pixels; other columns fit their content, up to MAX_WIDTH.
 const WIDE = ['Prompt', 'Story idea', 'Extra details', 'Details', 'Journey', 'Items', 'Reported problem', 'Error',
   'Top sources', 'Orders by source', 'Top pages', 'Top countries', 'Top books', 'Top searches'];

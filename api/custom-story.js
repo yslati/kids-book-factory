@@ -31,14 +31,14 @@ import { verifyTurnstile } from '../lib/turnstile.js';
 import { redeemPreviewPass } from '../lib/preview-pass.js';
 import { getRedis } from '../lib/redis.js';
 import { checkRateLimit, clientIp } from '../lib/ratelimit.js';
-import { publicUrl, putObject, r2Configured } from '../lib/r2.js';
+import { publicUrl, r2Configured } from '../lib/r2.js';
+import { flushPendingCovers, storeCover } from '../lib/cover-store.js';
 import { resolveBook, shopifyConfigured } from '../lib/shopify.js';
 import { generateCover, generationConfigured } from '../lib/generate.js';
 import { buildCustomPrompt } from '../lib/custom-prompt.js';
 import { childPhotoUrl } from '../lib/child-photo.js';
 import { verifyCustomerToken } from '../lib/customer-token.js';
 import { previewKey } from '../lib/object-names.js';
-import { coverForStorage } from '../lib/cover-image.js';
 import { withReporting } from '../lib/report.js';
 import { announceCustomStory, postCustomCart } from '../lib/custom-feed.js';
 import { appendRows, customRow, TABS, updateRow } from '../lib/sheet.js';
@@ -135,26 +135,19 @@ async function generate(req, res, body, startedAt) {
       deadline: startedAt + GENERATION_BUDGET_MS
     });
 
-    // Provider URLs are temporary; keep the provider's link only when the
-    // copy to R2 fails, so the parent still sees their cover.
-    let coverUrl = generated.url;
-    try {
-      const imgRes = await fetch(generated.url);
-      if (!imgRes.ok) throw new Error('cover-fetch-' + imgRes.status);
-      const cover = await coverForStorage(Buffer.from(await imgRes.arrayBuffer()), imgRes.headers.get('content-type'));
-      const key = previewKey({
-        childName: r.childName,
-        age: r.age,
-        language: r.language.code,
-        bookTitle: 'custom ' + r.world,
-        themeId: 'custom',
-        id: r.generationId,
-        ext: cover.ext
-      });
-      coverUrl = await putObject(key, cover.body, cover.contentType);
-    } catch (storeErr) {
-      console.warn('[custom-story] cover not stored, returning the provider URL:', (storeErr && storeErr.message) || storeErr);
-    }
+    // Kept in R2, else in Upstash behind /api/cover (lib/cover-store.js).
+    const redis = getRedis();
+    const kept = await storeCover(generated.url, (ext) => previewKey({
+      childName: r.childName,
+      age: r.age,
+      language: r.language.code,
+      bookTitle: 'custom ' + r.world,
+      themeId: 'custom',
+      id: r.generationId,
+      ext
+    }), { redis });
+    const coverUrl = kept.url;
+    if (kept.stored === 'pending') waitUntil(flushPendingCovers(redis, { keys: [kept.key], waits: [3000] }).catch(() => {}));
 
     // The add-to-cart card reads this; a Redis problem must never fail a paid cover.
     waitUntil(feed.link
@@ -162,7 +155,7 @@ async function generate(req, res, body, startedAt) {
         childName: r.childName, age: r.age, gender: r.gender, world: r.world, photoUrl, coverUrl, link
       }))
       .catch((e) => console.warn('[custom-story] record not saved:', (e && e.message) || e)));
-    feed.done({ coverUrl, attempt: generated.attempt, temporary: coverUrl === generated.url });
+    feed.done({ coverUrl, attempt: generated.attempt, stored: kept.stored });
     record({ coverUrl, attempt: generated.attempt, prompt });
 
     return res.status(200).json({ preview_url: coverUrl, generation_id: r.generationId, status: 'ready' });

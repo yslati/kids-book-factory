@@ -87,7 +87,7 @@ test('posts the photo, then the cover as a follow-up linked to it', async (t) =>
     coverUrl: COVER,
     bookTitle: 'The Winning Goal: Personalized Football Book',
     attempt: { provider: 'higgsfield', model: 'marketing-studio/image/flare', quality: 'medium' },
-    temporary: false
+    stored: 'r2'
   });
 
   const [photo, cover] = posts(calls);
@@ -137,8 +137,8 @@ test('a failure follows up with the error and no cover', async (t) => {
 test('a cover kept on the provider URL is flagged', async (t) => {
   withWebhook(t, WEBHOOK);
   const calls = stubDiscord(t);
-  await announcePreview(req, preview()).done({ coverUrl: 'https://cdn.higgsfield.ai/x.png', temporary: true });
-  assert.equal(fieldsOf(posts(calls)[1]).Stored, '⚠️ Not in R2, temporary provider link:\nhttps://cdn.higgsfield.ai/x.png');
+  await announcePreview(req, preview()).done({ coverUrl: 'https://cdn.higgsfield.ai/x.png', stored: 'provider' });
+  assert.equal(fieldsOf(posts(calls)[1]).Stored, '🚨 Not kept: temporary provider link, gone in about 7 days:\nhttps://cdn.higgsfield.ai/x.png');
 });
 
 test('if the photo post failed, the follow-up still goes out, unlinked', async (t) => {

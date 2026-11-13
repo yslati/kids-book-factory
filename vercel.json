@@ -31,6 +31,15 @@
     "api/cron/fal.js": {
       "maxDuration": 30
     },
+    "api/cron/openai.js": {
+      "maxDuration": 30
+    },
+    "api/cron/covers.js": {
+      "maxDuration": 60
+    },
+    "api/cover.js": {
+      "maxDuration": 10
+    },
     "api/share.js": {
       "maxDuration": 10
     },
@@ -102,6 +111,14 @@
     {
       "path": "/api/cron/fal",
       "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/openai",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/cron/covers",
+      "schedule": "0 5 * * *"
     }
   ]
 }
