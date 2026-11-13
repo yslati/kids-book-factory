@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import events from '../api/events.js';
-import summary from '../api/cron/daily-summary.js';
+import summary from '../api/cron/[job].js';
 
 function res() {
   return {
@@ -53,7 +53,7 @@ test('daily summary: refuses requests without the cron secret', async (t) => {
   t.after(() => { if (saved === undefined) delete process.env.CRON_SECRET; else process.env.CRON_SECRET = saved; });
   const call = async (authorization) => {
     const r = res();
-    await summary({ method: 'GET', url: '/api/cron/daily-summary', headers: authorization ? { authorization } : {}, query: {} }, r);
+    await summary({ method: 'GET', url: '/api/cron/daily-summary', headers: authorization ? { authorization } : {}, query: { job: 'daily-summary' } }, r);
     return r.statusCode;
   };
   assert.equal(await call(), 401);
