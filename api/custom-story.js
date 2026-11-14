@@ -162,11 +162,13 @@ async function generate(req, res, body, startedAt) {
     const coverUrl = kept.url;
     if (kept.stored === 'pending') waitUntil(flushPendingCovers(redis, { keys: [kept.key], waits: [3000] }).catch(() => {}));
 
-    // The add-to-cart card reads this; a Redis problem must never fail a paid cover.
-    waitUntil(feed.link
-      .then((link) => saveCustomStory(getRedis(), r.generationId, {
-        childName: r.childName, age: r.age, gender: r.gender, world: r.world, photoUrl, coverUrl, link
-      }))
+    // The add-to-cart card and /preview-status (which hands a cover to a page
+    // whose answer was lost) read this. Written at once, then again with the
+    // Discord link; a Redis problem must never fail a paid cover.
+    const story = { childName: r.childName, age: r.age, gender: r.gender, world: r.world, photoUrl, coverUrl, link: '' };
+    waitUntil(saveCustomStory(redis, r.generationId, story)
+      .then(() => feed.link)
+      .then((link) => (link ? saveCustomStory(redis, r.generationId, { ...story, link }) : null))
       .catch((e) => console.warn('[custom-story] record not saved:', (e && e.message) || e)));
     feed.done({ coverUrl, attempt: generated.attempt, stored: kept.stored });
     record({ coverUrl, attempt: generated.attempt, prompt });
