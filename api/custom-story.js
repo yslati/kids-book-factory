@@ -10,13 +10,15 @@
 //   token_date?, customer_token? }
 //   → { preview_url, generation_id, status: 'ready' }
 //   429 → { error: 'rate-limited', login_required, remaining: 0 }
+//   422 → { error: 'face-not-clear', reason } (costs no generation)
 // Cart body: { action: 'cart', generation_id, variant, price, details? } → 204
 //
 // Generate flow:
-//   1. Verify origin + the one-time pass from /upload-url (else Turnstile) +
-//      the custom-story rate limit and the shared per-IP backstop.
-//   2. Read the reference cover from Shopify by its product handle, and
-//      shrink a full-size photo (lib/child-photo.js).
+//   1. Verify origin + the one-time pass from /upload-url (else Turnstile).
+//   2. Read the reference cover from Shopify by its product handle, crop the
+//      photo to the face (lib/child-photo.js) and refuse a covered face
+//      (lib/face-check.js), then charge the custom-story limit (2 a day) and
+//      the shared per-IP backstop.
 //   3. Generate through the same model chain as previews (lib/generate.js)
 //      with the custom prompt (lib/custom-prompt.js).
 //   4. Re-encode and store the cover in R2 as
@@ -36,7 +38,8 @@ import { flushPendingCovers, storeCover } from '../lib/cover-store.js';
 import { resolveBook, shopifyConfigured } from '../lib/shopify.js';
 import { generateCover, generationConfigured } from '../lib/generate.js';
 import { buildCustomPrompt } from '../lib/custom-prompt.js';
-import { childPhotoUrl } from '../lib/child-photo.js';
+import { prepareChildPhoto } from '../lib/child-photo.js';
+import { checkFace, faceCheckError } from '../lib/face-check.js';
 import { verifyCustomerToken } from '../lib/customer-token.js';
 import { previewKey } from '../lib/object-names.js';
 import { withReporting } from '../lib/report.js';
@@ -102,14 +105,22 @@ async function generate(req, res, body, startedAt) {
     return res.status(403).json({ error: 'challenge-failed' });
   }
 
-  // Its own daily allowance, so trying an idea doesn't use up the product
-  // previews, plus the per-IP backstop shared with /preview, which caps what
-  // one machine can spend on both together.
+  // The photo is cropped and its face checked first, so a refused photo
+  // costs no generation. Then the custom story's own daily allowance (2), so
+  // trying an idea doesn't use up the product previews, plus the per-IP
+  // backstop shared with /preview, which caps what one machine can spend on
+  // both together.
   const customer = verifyCustomerToken(body);
-  const rl = await checkRateLimit(req, customer.valid ? 'custom-cust' : 'custom', customer.valid ? customer.customerId : null);
-  const capped = await checkRateLimit(req, 'preview-ip-cap');
-  if (!rl.success || !capped.success) {
-    return res.status(429).json({ error: 'rate-limited', login_required: !customer.valid, remaining: 0 });
+  const bookLoad = resolveBook(r.reference);
+  bookLoad.catch(() => { /* awaited below */ });
+  const photo = await prepareChildPhoto(r.photoKey);
+  const refused = photo.image ? faceCheckError(await checkFace(photo.image)) : null;
+  if (!refused) {
+    const rl = await checkRateLimit(req, customer.valid ? 'custom-cust' : 'custom', customer.valid ? customer.customerId : null);
+    const capped = await checkRateLimit(req, 'preview-ip-cap');
+    if (!rl.success || !capped.success) {
+      return res.status(429).json({ error: 'rate-limited', login_required: !customer.valid, remaining: 0 });
+    }
   }
 
   const photoUrl = publicUrl(r.photoKey);
@@ -128,7 +139,9 @@ async function generate(req, res, body, startedAt) {
 
   let prompt = '';
   try {
-    const [book, childUrl] = await Promise.all([resolveBook(r.reference), childPhotoUrl(r.photoKey)]);
+    if (refused) throw refused;
+    const book = await bookLoad;
+    const childUrl = photo.url;
     prompt = buildCustomPrompt(r);
     const generated = await generateCover(book.coverUrl, childUrl, prompt, {
       coverAspect: book.coverAspect,
@@ -161,11 +174,15 @@ async function generate(req, res, body, startedAt) {
     return res.status(200).json({ preview_url: coverUrl, generation_id: r.generationId, status: 'ready' });
   } catch (err) {
     console.error('[custom-story] failed:', err && err.stack ? err.stack : err);
-    const detail = String((err && err.message) || err);
+    const code = String((err && err.message) || err);
+    const detail = code + (err && err.reason ? ': ' + err.reason : '');
     feed.done({ error: detail });
     record({ error: detail, prompt });
-    if (detail === 'product-not-found' || detail === 'cover-missing') {
-      return res.status(422).json({ error: detail, status: 'failed' });
+    if (code === 'face-not-clear') {
+      return res.status(422).json({ error: code, status: 'failed', reason: err.reason });
+    }
+    if (code === 'product-not-found' || code === 'cover-missing') {
+      return res.status(422).json({ error: code, status: 'failed' });
     }
     return res.status(502).json({ error: 'generation-failed', status: 'failed' });
   }

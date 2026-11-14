@@ -4,7 +4,19 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attemptLabel, usableAttempts, runAttempts, FAL_LOW_BALANCE_USD } from '../lib/provider-order.js';
+import { attemptLabel, raiseQuality, usableAttempts, runAttempts, FAL_LOW_BALANCE_USD } from '../lib/provider-order.js';
+
+test('a free fix raises every medium attempt to high and leaves the rest', () => {
+  const chain = [
+    { provider: 'higgsfield', model: 'sunburst', quality: 'medium' },
+    { provider: 'higgsfield', model: 'flare', quality: 'medium' },
+    { provider: 'higgsfield', model: '2.0', quality: 'low' },
+    { provider: 'fal' }
+  ];
+  assert.deepEqual(raiseQuality(chain, 'high').map((a) => a.quality), ['high', 'high', 'low', undefined]);
+  assert.equal(chain[0].quality, 'medium', 'the chain itself is not changed');
+  assert.equal(raiseQuality(chain, undefined), chain);
+});
 
 const FLARE_MEDIUM = { provider: 'higgsfield', model: 'marketing-studio/image/flare', quality: 'medium' };
 const FLARE_LOW = { provider: 'higgsfield', model: 'marketing-studio/image/flare', quality: 'low' };
