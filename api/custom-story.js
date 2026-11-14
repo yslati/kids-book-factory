@@ -38,6 +38,7 @@ import { flushPendingCovers, storeCover } from '../lib/cover-store.js';
 import { resolveBook, shopifyConfigured } from '../lib/shopify.js';
 import { generateCover, generationConfigured } from '../lib/generate.js';
 import { buildCustomPrompt } from '../lib/custom-prompt.js';
+import { MAX_PROMPT_CHARS, withFaceDescription } from '../lib/prompt.js';
 import { prepareChildPhoto } from '../lib/child-photo.js';
 import { checkFace, faceCheckError } from '../lib/face-check.js';
 import { verifyCustomerToken } from '../lib/customer-token.js';
@@ -47,9 +48,9 @@ import { announceCustomStory, postCustomCart } from '../lib/custom-feed.js';
 import { appendRows, customRow, TABS, updateRow } from '../lib/sheet.js';
 import { claimCartPost, normaliseCart, normaliseGenerate, readCustomStory, saveCustomStory } from '../lib/custom-story.js';
 
-// vercel.json gives this function 75s; generation must finish within 60s
-// (the storefront waits 75s).
-const GENERATION_BUDGET_MS = 60000;
+// vercel.json gives this function 90s; generation must finish within 75s
+// (the storefront waits 90s).
+const GENERATION_BUDGET_MS = 75000;
 
 export default withReporting(handler);
 
@@ -114,7 +115,8 @@ async function generate(req, res, body, startedAt) {
   const bookLoad = resolveBook(r.reference);
   bookLoad.catch(() => { /* awaited below */ });
   const photo = await prepareChildPhoto(r.photoKey);
-  const refused = photo.image ? faceCheckError(await checkFace(photo.image)) : null;
+  const face = photo.image ? await checkFace(photo.image) : null;
+  const refused = faceCheckError(face);
   if (!refused) {
     const rl = await checkRateLimit(req, customer.valid ? 'custom-cust' : 'custom', customer.valid ? customer.customerId : null);
     const capped = await checkRateLimit(req, 'preview-ip-cap');
@@ -142,11 +144,15 @@ async function generate(req, res, body, startedAt) {
     if (refused) throw refused;
     const book = await bookLoad;
     const childUrl = photo.url;
-    prompt = buildCustomPrompt(r);
-    const generated = await generateCover(book.coverUrl, childUrl, prompt, {
+    const base = buildCustomPrompt(r);
+    // The face description only where the provider's prompt limit has room.
+    const promptFor = (maxChars) => (maxChars > MAX_PROMPT_CHARS ? withFaceDescription(base, face && face.description) : base);
+    prompt = promptFor(Infinity);
+    const generated = await generateCover(book.coverUrl, childUrl, promptFor, {
       coverAspect: book.coverAspect,
       deadline: startedAt + GENERATION_BUDGET_MS
     });
+    prompt = generated.prompt || prompt;
 
     // Kept in R2, else in Upstash behind /api/cover (lib/cover-store.js).
     const redis = getRedis();
