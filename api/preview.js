@@ -65,7 +65,6 @@ import { abandonPendingCover, generateCover, generationConfigured } from '../lib
 import { FIX_REASONS, MAX_FIX_NOTE_CHARS, MAX_PROMPT_CHARS, buildPreviewPrompt, withFaceDescription, withFix } from '../lib/prompt.js';
 import { prepareChildPhoto } from '../lib/child-photo.js';
 import { checkFace, faceCheckError } from '../lib/face-check.js';
-import { withHeadGate } from '../lib/head-gate.js';
 import { resolveBookLanguage } from '../lib/book-languages.js';
 import { verifyCustomerToken } from '../lib/customer-token.js';
 import { tagCustomerPreviewLimit } from '../lib/customer-tag.js';
@@ -322,18 +321,11 @@ async function runPreview(req, res, p) {
     prompt = promptFor(Infinity);
 
     // 3. Generate, falling back down the model chain on failure. Only the
-    //    product page polls for a queued cover, and only with Redis to hold
-    //    it. The head gate regenerates once when the painted head comes out
-    //    far bigger than the hero's; its retry never keeps a pending job,
-    //    since a cover is already in hand.
-    const run = (keep) => generateCover(book.coverUrl, childUrl, promptFor, {
+    //    product page polls for a queued cover, and only with Redis to hold it.
+    const generated = await generateCover(book.coverUrl, childUrl, promptFor, {
       coverAspect: book.coverAspect,
       deadline: startedAt + GENERATION_BUDGET_MS,
-      keepPending: keep
-    });
-    const generated = await withHeadGate(() => run(!fix && Boolean(getRedis())), {
-      coverUrl: book.coverUrl,
-      retry: () => run(false)
+      keepPending: !fix && Boolean(getRedis())
     });
 
     // 4. Persist and record it, with the prompt the cover was made from.
