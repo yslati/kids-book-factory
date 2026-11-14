@@ -18,6 +18,33 @@ test('a free fix raises every medium attempt to high and leaves the rest', () =>
   assert.equal(raiseQuality(chain, undefined), chain);
 });
 
+test('a raised attempt drops the time cap that was sized for medium', () => {
+  const [raised] = raiseQuality([{ provider: 'openai', quality: 'medium', maxMs: 35000 }], 'high');
+  assert.deepEqual(raised, { provider: 'openai', quality: 'high' });
+});
+
+test('an attempt with maxMs gets at most that long, the next one the rest', async () => {
+  let clock = 0;
+  const given = [];
+  const out = await runAttempts(
+    [{ provider: 'openai', maxMs: 35000 }, { provider: 'higgsfield' }],
+    async (attempt, timeoutMs) => {
+      given.push(timeoutMs);
+      if (attempt.provider === 'openai') { clock += timeoutMs; throw new Error('timeout'); }
+      return 'https://cover';
+    },
+    { deadline: 60000, minAttemptMs: 15000, now: () => clock }
+  );
+  assert.deepEqual(given, [35000, 25000]);
+  assert.equal(out.attempt.provider, 'higgsfield');
+});
+
+test('the prompt an attempt was sent comes back with its cover', async () => {
+  const out = await runAttempts([{ provider: 'openai' }], async () => ({ url: 'u', prompt: 'p', cost: 0.03 }),
+    { deadline: 60000, minAttemptMs: 15000, now: () => 0 });
+  assert.deepEqual(out, { url: 'u', cost: 0.03, prompt: 'p', attempt: { provider: 'openai' } });
+});
+
 const FLARE_MEDIUM = { provider: 'higgsfield', model: 'marketing-studio/image/flare', quality: 'medium' };
 const FLARE_LOW = { provider: 'higgsfield', model: 'marketing-studio/image/flare', quality: 'low' };
 const STUDIO_LOW = { provider: 'higgsfield', model: 'marketing-studio/image', quality: 'low' };
