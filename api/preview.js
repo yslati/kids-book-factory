@@ -65,6 +65,7 @@ import { abandonPendingCover, generateCover, generationConfigured } from '../lib
 import { FIX_REASONS, MAX_FIX_NOTE_CHARS, MAX_PROMPT_CHARS, buildPreviewPrompt, withFaceDescription, withFix } from '../lib/prompt.js';
 import { prepareChildPhoto } from '../lib/child-photo.js';
 import { checkFace, faceCheckError } from '../lib/face-check.js';
+import { withHeadGate } from '../lib/head-gate.js';
 import { resolveBookLanguage } from '../lib/book-languages.js';
 import { verifyCustomerToken } from '../lib/customer-token.js';
 import { tagCustomerPreviewLimit } from '../lib/customer-tag.js';
@@ -308,21 +309,31 @@ async function runPreview(req, res, p) {
     if (refused) throw refused;
     book = await bookLoad;
     const childUrl = photo.url;
-    const base = buildPreviewPrompt(book.prompt, { language, childName, age: ageText });
-    // Sized for each provider's own prompt limit (lib/generate.js): the face
-    // description only where there is room for it, the fix line cut to fit.
+    const order = { language, childName, age: ageText };
+    const base = buildPreviewPrompt(book.prompt, order);
+    const long = withFaceDescription(buildPreviewPrompt(book.openaiPrompt || book.prompt, order), face && face.description);
+    // Sized for each provider's own prompt limit (lib/generate.js): OpenAI's
+    // longer prompt with the face description where there is room for it,
+    // the fix line cut to fit.
     const promptFor = (maxChars) => {
-      const text = maxChars > MAX_PROMPT_CHARS ? withFaceDescription(base, face && face.description) : base;
+      const text = maxChars > MAX_PROMPT_CHARS ? long : base;
       return fix ? withFix(text, fix, childName, { maxChars }) : text;
     };
     prompt = promptFor(Infinity);
 
     // 3. Generate, falling back down the model chain on failure. Only the
-    //    product page polls for a queued cover, and only with Redis to hold it.
-    const generated = await generateCover(book.coverUrl, childUrl, promptFor, {
+    //    product page polls for a queued cover, and only with Redis to hold
+    //    it. The head gate regenerates once when the painted head comes out
+    //    far bigger than the hero's; its retry never keeps a pending job,
+    //    since a cover is already in hand.
+    const run = (keep) => generateCover(book.coverUrl, childUrl, promptFor, {
       coverAspect: book.coverAspect,
       deadline: startedAt + GENERATION_BUDGET_MS,
-      keepPending: !fix && Boolean(getRedis())
+      keepPending: keep
+    });
+    const generated = await withHeadGate(() => run(!fix && Boolean(getRedis())), {
+      coverUrl: book.coverUrl,
+      retry: () => run(false)
     });
 
     // 4. Persist and record it, with the prompt the cover was made from.
