@@ -129,6 +129,19 @@ test('a visit without cookie consent is counted as one', async () => {
   assert.deepEqual(redis.hashes.get(key('count')), { page_viewed: 2, visits: 2, cookieless_visits: 1 });
 });
 
+test('consent given mid-visit continues the cookieless visit', async () => {
+  const redis = fakeRedis();
+  const anon = await recordEvent(redis, page('anon:2', '/', { consented: false, referrer: 'https://www.google.com' }));
+  assert.equal(anon.visit, 1);
+  const after = await recordEvent(redis, page('c10', '/products/book', { consented: true }), { anonId: 'anon:2' });
+  assert.deepEqual(after, { visit: null, source: null });
+  assert.equal(redis.hashes.get(key('count')).visits, 1);
+  assert.equal(redis.strings.get('kbf:ev:source:c10'), redis.strings.get('kbf:ev:source:anon:2'));
+  assert.equal(redis.strings.get('kbf:ev:visits:c10'), 1);
+  const other = await recordEvent(redis, page('c11', '/', { consented: true }), { anonId: 'anon:none' });
+  assert.equal(other.visit, 1, 'no cookieless visit from this browser');
+});
+
 test('a webhook order counts once, with its source and revenue', async () => {
   const redis = fakeRedis();
   const order = { name: 'checkout_completed', checkout: { total: { amount: 50.18, currency: 'USD' }, items: [], discounts: [] } };
