@@ -7,11 +7,13 @@
 // /preview's budget. queue_position is there while it waits for a slot.
 // Each poll looks at the job once; the one that sees it end copies the cover
 // to R2 and records it like /preview does (lib/preview-finish.js), exactly
-// once (lib/queued-preview.js). It also answers 'ready' for a cover /preview
-// finished itself (from its record), so a page whose /preview answer was lost
-// can still show it. An unknown or expired id is 'failed'.
+// once (lib/queued-preview.js). It also answers 'ready' for a cover /preview,
+// a free fix or /custom-story finished itself (from its record), so a page
+// whose answer was lost can still show it. An unknown or expired id is
+// 'failed'.
 
 import { readPreviewRecord } from '../../lib/preview-record.js';
+import { readCustomStory } from '../../lib/custom-story.js';
 import { applyCors, isOriginAllowed } from '../../lib/cors.js';
 import { getRedis } from '../../lib/redis.js';
 import { withReporting } from '../../lib/report.js';
@@ -58,7 +60,7 @@ async function handler(req, res) {
   // record holds the stored cover, so the parent sees it instead of spending
   // another generation on the same photo.
   if (result.status === 'failed') {
-    const record = await readPreviewRecord(redis, id);
+    const record = (await readPreviewRecord(redis, id)) || (await readCustomStory(redis, id));
     if (record && record.coverUrl) return res.status(200).json({ status: 'ready', preview_url: record.coverUrl });
   }
   return res.status(200).json(result);

@@ -17,7 +17,10 @@
 // Everything but the problem comes from that cover's record
 // (lib/preview-record.js), not from the browser:
 //   { fix_of: generation_id, fix_reason, fix_note?, fix_name?, fix_rating?,
-//     customer_id?, token_date?, customer_token? }
+//     fix_id?, customer_id?, token_date?, customer_token? }
+// fix_id is the id the page wants for the fixed cover (10-64 letters and
+// digits), so it can recover the cover from /preview-status if the answer
+// is lost.
 // fix_name, with fix_reason 'name', is the name the cover should read.
 //   → { preview_url, generation_id, status: 'ready' }
 //   404 fix-unavailable (no record, e.g. an older cover), 409 fix-used,
@@ -244,10 +247,16 @@ async function fixPreview(req, res, body, startedAt) {
   // The corrected name goes in the problem too, so the sheet and #previews show it.
   const problemNote = fixName ? 'should be "' + fixName + '"' : note;
   waitUntil(updateRow(TABS.previews, fixOf, { 'Reported problem': problemText(reason, problemNote) }));
+  // The page picks the fixed cover's id, so it can ask /preview-status for
+  // the cover if this answer is lost; an id already in use gets a fresh one.
+  const wantedId = String(body.fix_id || '');
+  const fixId = /^[A-Za-z0-9]{10,64}$/.test(wantedId) && !(await readPreviewRecord(redis, wantedId))
+    ? wantedId
+    : newGenerationId();
   const ok = await runPreview(req, res, {
     themeId: record.themeId,
     photoKey: record.photoKey,
-    generationId: newGenerationId(),
+    generationId: fixId,
     childName: fixName || record.childName || '',
     ageText: record.age || '',
     language,
