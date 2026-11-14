@@ -9,14 +9,19 @@
 //   slot after a few seconds (queue_position is then its place in line);
 //   GET /preview-status/<id> then finishes it (lib/queued-preview.js)
 // 429 → { error: 'rate-limited', login_required, remaining: 0 }
+// 422 → { error: 'face-not-clear', reason } when the face is covered, turned
+//   away or missing (lib/face-check.js); that costs no generation
 //
-// A free fix of a cover the parent reported (preview page, once per cover,
-// outside the daily allowance). Everything but the problem comes from that
-// cover's record (lib/preview-record.js), not from the browser:
-//   { fix_of: generation_id, fix_reason, fix_note?, fix_name?, fix_rating? }
+// A free fix of a cover the parent reported (preview page, once per cover).
+// It counts as a generation like a preview, and is made at high quality.
+// Everything but the problem comes from that cover's record
+// (lib/preview-record.js), not from the browser:
+//   { fix_of: generation_id, fix_reason, fix_note?, fix_name?, fix_rating?,
+//     customer_id?, token_date?, customer_token? }
 // fix_name, with fix_reason 'name', is the name the cover should read.
 //   → { preview_url, generation_id, status: 'ready' }
-//   404 fix-unavailable (no record, e.g. an older cover), 409 fix-used
+//   404 fix-unavailable (no record, e.g. an older cover), 409 fix-used,
+//   429 rate-limited as above
 //
 // Also takes the preview page's follow-ups for the requests sheet, here
 // rather than in their own function since Vercel's Hobby plan caps a
@@ -30,9 +35,11 @@
 //
 // Flow:
 //   1. Verify origin + the one-time preview pass from /upload-url (else a
-//      Turnstile token) + rate limit (per-customer tier when signed in).
+//      Turnstile token).
 //   2. Resolve cover + prompt SERVER-SIDE from Shopify by theme_id (anti-tamper),
-//      and shrink a full-size photo to 1024px (lib/child-photo.js).
+//      crop the photo to the face (lib/child-photo.js), refuse a covered face
+//      (lib/face-check.js), then charge the allowance (lib/ratelimit.js
+//      chargeGeneration: 4 a day per IP, 2 more once signed in).
 //   3. Generate ([cover, child] + prompt) via lib/generate.js, which tries an
 //      ordered chain of models until one returns a cover.
 //   4. Re-encode the cover as a JPEG (lib/cover-image.js) and persist it to R2
@@ -48,12 +55,13 @@ import { applyCors, isOriginAllowed } from '../lib/cors.js';
 import { verifyTurnstile } from '../lib/turnstile.js';
 import { redeemPreviewPass } from '../lib/preview-pass.js';
 import { getRedis } from '../lib/redis.js';
-import { checkRateLimit, clientIp } from '../lib/ratelimit.js';
+import { chargeGeneration, checkRateLimit, clientIp } from '../lib/ratelimit.js';
 import { r2Configured } from '../lib/r2.js';
 import { resolveBook, shopifyConfigured } from '../lib/shopify.js';
-import { abandonPendingCover, generateCover, generationConfigured } from '../lib/generate.js';
+import { abandonPendingCover, generateCover, generationConfigured, promptLimit } from '../lib/generate.js';
 import { FIX_REASONS, MAX_FIX_NOTE_CHARS, buildPreviewPrompt, withFix } from '../lib/prompt.js';
-import { childPhotoUrl } from '../lib/child-photo.js';
+import { prepareChildPhoto } from '../lib/child-photo.js';
+import { checkFace, faceCheckError } from '../lib/face-check.js';
 import { resolveBookLanguage } from '../lib/book-languages.js';
 import { verifyCustomerToken } from '../lib/customer-token.js';
 import { tagCustomerPreviewLimit } from '../lib/customer-tag.js';
@@ -74,13 +82,6 @@ import { waitUntil } from '@vercel/functions';
 // the request arriving, leaving time to copy the cover to R2 and respond
 // before the storefront stops waiting (70s on the product page).
 const GENERATION_BUDGET_MS = 60000;
-
-// Both limiters return null when limiting is disabled; only compare real numbers.
-function minRemaining(a, b) {
-  if (typeof a !== 'number') return typeof b === 'number' ? b : null;
-  if (typeof b !== 'number') return a;
-  return Math.min(a, b);
-}
 
 export default withReporting(handler);
 
@@ -197,39 +198,25 @@ async function handler(req, res) {
     return res.status(403).json({ error: 'challenge-failed' });
   }
 
-  // Tier selection: a valid signed token buys the higher per-customer
-  // allowance; everyone else gets the anonymous per-IP allowance and is
-  // invited to sign in. `login_required` drives which message the theme shows.
-  const customer = verifyCustomerToken(body);
-  const bucket = customer.valid ? 'preview-cust' : 'preview';
-  const rl = await checkRateLimit(req, bucket, customer.valid ? customer.customerId : null);
-
-  // Per-IP backstop, enforced for everyone including verified customers, so a
-  // single machine can't multiply free previews with throwaway accounts.
-  // Checked even when the tier limit already denied, so both windows stay in
-  // step - a denied request shouldn't leave the cap un-decremented.
-  const capped = await checkRateLimit(req, 'preview-ip-cap');
-
-  if (!rl.success || !capped.success) {
-    // A verified customer who has run out - by their own allowance or by the
-    // shared IP cap - is our warmest lead. Tag them for the follow-up email.
-    // Fire-and-forget: a tagging failure must not change this response.
-    if (customer.valid) {
-      try {
-        await tagCustomerPreviewLimit(customer.customerId);
-      } catch (e) { /* never surfaces */ }
-    }
-    return res.status(429).json({
-      error: 'rate-limited',
-      login_required: !customer.valid,
-      remaining: 0
-    });
-  }
-
+  // The allowance is charged in runPreview, once the photo has passed the
+  // face check, so a refused photo costs the parent nothing.
   return runPreview(req, res, {
-    themeId, photoKey, generationId, childName, ageText, language, customer, startedAt,
-    remaining: minRemaining(rl.remaining, capped.remaining)
+    themeId, photoKey, generationId, childName, ageText, language,
+    customer: verifyCustomerToken(body), startedAt
   });
+}
+
+// The 429 for a parent who has used up their generations. `login_required`
+// drives which message the theme shows. A verified customer who has run out
+// is our warmest lead, so they are tagged for the follow-up email; a tagging
+// failure never changes the response.
+async function refuseOverLimit(res, customer) {
+  if (customer.valid) {
+    try {
+      await tagCustomerPreviewLimit(customer.customerId);
+    } catch (e) { /* never surfaces */ }
+  }
+  res.status(429).json({ error: 'rate-limited', login_required: !customer.valid, remaining: 0 });
 }
 
 // The free fix: one per cover, its photo, book, name and age read back from
@@ -266,7 +253,6 @@ async function fixPreview(req, res, body, startedAt) {
     language,
     customer: verifyCustomerToken(body),
     startedAt,
-    remaining: null,
     fix: { of: fixOf, reason, note: problemNote, rating, link: record.link || '' }
   });
   if (!ok) {
@@ -278,6 +264,24 @@ async function fixPreview(req, res, body, startedAt) {
 // Resolves to true when the cover is ready or queued.
 async function runPreview(req, res, p) {
   const { themeId, photoKey, generationId, childName, ageText, language, customer, startedAt, fix } = p;
+
+  // 2. The cover and prompt come from the product's own metafields while the
+  //    photo is cropped to the face (and shrunk if full-size). A covered or
+  //    unreadable face is refused before the allowance is charged or anything
+  //    is paid for; a fix keeps the photo its cover was made from.
+  const bookLoad = resolveBook(themeId);
+  bookLoad.catch(() => { /* awaited below */ });
+  const photo = await prepareChildPhoto(photoKey);
+  const refused = !fix && photo.image ? faceCheckError(await checkFace(photo.image)) : null;
+  if (!refused) {
+    const allowed = await chargeGeneration(req, customer);
+    if (!allowed.success) {
+      await refuseOverLimit(res, customer);
+      return false;
+    }
+    p.remaining = allowed.remaining;
+  }
+
   // Counted as generation starts, whether or not it succeeds.
   const counts = countPreview(getRedis(), req, customer.valid ? customer.customerId : null);
   waitUntil(counts);
@@ -289,19 +293,20 @@ async function runPreview(req, res, p) {
   let prompt = '';
   let book = null;
   try {
-    // 2. Resolve cover + prompt from the product's own metafields, while the
-    //    photo is checked (and shrunk if full-size) for the generator.
-    let childUrl;
-    [book, childUrl] = await Promise.all([resolveBook(themeId), childPhotoUrl(photoKey)]);
+    if (refused) throw refused;
+    book = await bookLoad;
+    const childUrl = photo.url;
     prompt = buildPreviewPrompt(book.prompt, { language, childName, age: ageText });
-    if (fix) prompt = withFix(prompt, fix, childName);
+    if (fix) prompt = withFix(prompt, fix, childName, { maxChars: promptLimit() });
 
     // 3. Generate, falling back down the model chain on failure. Only the
     //    product page polls for a queued cover, and only with Redis to hold it.
+    //    A fix, the parent's last chance before leaving, gets high quality.
     const generated = await generateCover(book.coverUrl, childUrl, prompt, {
       coverAspect: book.coverAspect,
       deadline: startedAt + GENERATION_BUDGET_MS,
-      keepPending: !fix && Boolean(getRedis())
+      keepPending: !fix && Boolean(getRedis()),
+      quality: fix ? 'high' : undefined
     });
 
     // 4. Persist and record it.
@@ -327,9 +332,13 @@ async function runPreview(req, res, p) {
     const code = (err && err.message) || 'preview-failed';
     // Log the real error to the server (vercel dev terminal) for diagnosis.
     console.error('[preview] failed:', err && err.stack ? err.stack : err);
-    const detail = String((err && err.message) || err);
+    // A stopped photo says why ("face-not-clear: covered"), so #previews and
+    // the sheet show what the parent was told.
+    const detail = String((err && err.message) || err) + (err && err.reason ? ': ' + err.reason : '');
     failPreview(req, p, { error: detail, prompt, feed });
-    if (code === 'product-not-found' || code === 'prompt-missing' || code === 'cover-missing') {
+    if (code === 'face-not-clear') {
+      res.status(422).json({ error: code, status: 'failed', reason: err.reason, remaining: p.remaining });
+    } else if (code === 'product-not-found' || code === 'prompt-missing' || code === 'cover-missing') {
       res.status(422).json({ error: code, status: 'failed', detail });
     } else {
       res.status(502).json({ error: 'generation-failed', status: 'failed', detail });

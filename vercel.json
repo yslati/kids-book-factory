@@ -2,7 +2,8 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "functions": {
     "api/preview.js": {
-      "maxDuration": 75
+      "maxDuration": 75,
+      "includeFiles": "models/**"
     },
     "api/upload-url.js": {
       "maxDuration": 15
@@ -29,7 +30,8 @@
       "maxDuration": 10
     },
     "api/custom-story.js": {
-      "maxDuration": 75
+      "maxDuration": 75,
+      "includeFiles": "models/**"
     },
     "api/cron/[job].js": {
       "maxDuration": 60

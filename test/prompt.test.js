@@ -15,6 +15,38 @@ test('the default prompt asks for 75% real child, 25% cover style', () => {
   assert.doesNotMatch(DEFAULT_PREVIEW_PROMPT, /85%/);
 });
 
+test('the default prompt names skin tone and face shape in its first lines', () => {
+  const mainTask = DEFAULT_PREVIEW_PROMPT.split('\n\n')[1];
+  assert.match(mainTask, /^MAIN TASK/);
+  assert.match(mainTask, /Keep the child's exact skin tone and face shape/);
+  assert.match(DEFAULT_PREVIEW_PROMPT, /never a lighter or darker skin/);
+});
+
+test('a likeness fix lists the features to match and moves the ratio toward the photo', () => {
+  const line = FIX_REASONS.likeness.line();
+  for (const feature of ['face shape', 'eye shape and spacing', 'nose', 'skin tone', 'hairline and hair texture', 'age']) {
+    assert.ok(line.includes(feature), feature);
+  }
+  assert.match(line, /90% of the real child and 10%/);
+  assert.match(line, /overriding the ratio below/);
+  assert.match(line, /Pose, expression, outfit, background and text still come from the cover/);
+});
+
+test('a fix line loses whole sentences from the end when the provider limit is tight', () => {
+  const full = FIX_REASONS.likeness.line();
+  const prompt = 'p'.repeat(100);
+  // Room for the first two sentences only.
+  const twoSentences = full.split('. ').slice(0, 2).join('. ') + '.';
+  const fixed = withFix(prompt, { reason: 'likeness', note: 'his nose is wider' }, 'Jack', { maxChars: 100 + 2 + twoSentences.length + 10 });
+  assert.equal(fixed, twoSentences + '\n\n' + prompt);
+  // Even with no room at all, the first sentence is kept.
+  const tight = withFix(prompt, { reason: 'likeness', note: '' }, 'Jack', { maxChars: 50 });
+  assert.equal(tight, 'FIX: the last cover did not look like this child.\n\n' + prompt);
+  // A roomy provider gets the whole line and the note.
+  const roomy = withFix(prompt, { reason: 'likeness', note: 'his nose is wider' }, 'Jack', { maxChars: 32000 });
+  assert.equal(roomy, full + ' The parent adds: "his nose is wider"\n\n' + prompt);
+});
+
 test('the default prompt takes pose and expression from the cover, not the photo', () => {
   assert.match(DEFAULT_PREVIEW_PROMPT, /in the original hero's exact pose, head angle, gaze, expression and outfit/);
   assert.match(DEFAULT_PREVIEW_PROMPT, /EXPRESSION COMES FROM THE COVER, NEVER FROM THE PHOTO/);
