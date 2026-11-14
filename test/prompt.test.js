@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DEFAULT_PREVIEW_PROMPT, FIX_REASONS, MAX_FIX_NOTE_CHARS, MAX_HERO_POSE_CHARS, buildPreviewPrompt, withFix, withHeroPose
+  DEFAULT_PREVIEW_PROMPT, FIX_REASONS, HEAD_AND_SKIN, MAX_FIX_NOTE_CHARS, MAX_HERO_POSE_CHARS, buildPreviewPrompt, withFix, withHeroPose, withLikenessNotes
 } from '../lib/prompt.js';
 import { BOOK_LANGUAGES, resolveBookLanguage } from '../lib/book-languages.js';
 
@@ -126,4 +126,14 @@ test('puts the book\'s hero pose first and caps its length', () => {
 test('leaves the prompt alone when the book has no hero pose', () => {
   assert.equal(withHeroPose('BASE', ''), 'BASE');
   assert.equal(withHeroPose('BASE', null), 'BASE');
+});
+
+test('likeness notes put the face description and head rule before LIKENESS', () => {
+  const out = withLikenessNotes('MAIN TASK - x\n\nLIKENESS - y', 'Oval face,\n  gap teeth.');
+  assert.ok(out.startsWith('MAIN TASK - x\n\nTHIS CHILD, AS THE PHOTO SHOWS THEM - Oval face, gap teeth. '));
+  assert.ok(out.includes('\n\n' + HEAD_AND_SKIN + '\n\nLIKENESS - y'));
+  // A prompt without LIKENESS (custom stories) gets them at the end; no description still adds the rule.
+  assert.equal(withLikenessNotes('CUSTOM', ''), 'CUSTOM\n\n' + HEAD_AND_SKIN);
+  assert.match(HEAD_AND_SKIN, /no larger than the original hero's/);
+  assert.match(HEAD_AND_SKIN, /neck, arms, hands, legs and knees - takes the child's own skin tone/);
 });

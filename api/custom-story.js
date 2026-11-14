@@ -38,7 +38,7 @@ import { flushPendingCovers, storeCover } from '../lib/cover-store.js';
 import { resolveBook, shopifyConfigured } from '../lib/shopify.js';
 import { generateCover, generationConfigured } from '../lib/generate.js';
 import { buildCustomPrompt } from '../lib/custom-prompt.js';
-import { MAX_PROMPT_CHARS, withFaceDescription } from '../lib/prompt.js';
+import { MAX_PROMPT_CHARS, withLikenessNotes } from '../lib/prompt.js';
 import { prepareChildPhoto } from '../lib/child-photo.js';
 import { checkFace, faceCheckError } from '../lib/face-check.js';
 import { verifyCustomerToken } from '../lib/customer-token.js';
@@ -145,8 +145,8 @@ async function generate(req, res, body, startedAt) {
     const book = await bookLoad;
     const childUrl = photo.url;
     const base = buildCustomPrompt(r);
-    // The face description only where the provider's prompt limit has room.
-    const promptFor = (maxChars) => (maxChars > MAX_PROMPT_CHARS ? withFaceDescription(base, face && face.description) : base);
+    // The face description and head-size rule only where the provider's prompt limit has room.
+    const promptFor = (maxChars) => (maxChars > MAX_PROMPT_CHARS ? withLikenessNotes(base, face && face.description) : base);
     prompt = promptFor(Infinity);
     const generated = await generateCover(book.coverUrl, childUrl, promptFor, {
       coverAspect: book.coverAspect,

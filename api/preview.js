@@ -62,7 +62,7 @@ import { chargeGeneration, checkRateLimit, clientIp } from '../lib/ratelimit.js'
 import { r2Configured } from '../lib/r2.js';
 import { resolveBook, shopifyConfigured } from '../lib/shopify.js';
 import { abandonPendingCover, generateCover, generationConfigured } from '../lib/generate.js';
-import { FIX_REASONS, MAX_FIX_NOTE_CHARS, MAX_PROMPT_CHARS, buildPreviewPrompt, withFaceDescription, withFix } from '../lib/prompt.js';
+import { FIX_REASONS, MAX_FIX_NOTE_CHARS, MAX_PROMPT_CHARS, buildPreviewPrompt, withLikenessNotes, withFix } from '../lib/prompt.js';
 import { prepareChildPhoto } from '../lib/child-photo.js';
 import { checkFace, faceCheckError } from '../lib/face-check.js';
 import { resolveBookLanguage } from '../lib/book-languages.js';
@@ -312,7 +312,7 @@ async function runPreview(req, res, p) {
     // Sized for each provider's own prompt limit (lib/generate.js): the face
     // description only where there is room for it, the fix line cut to fit.
     const promptFor = (maxChars) => {
-      const text = maxChars > MAX_PROMPT_CHARS ? withFaceDescription(base, face && face.description) : base;
+      const text = maxChars > MAX_PROMPT_CHARS ? withLikenessNotes(base, face && face.description) : base;
       return fix ? withFix(text, fix, childName, { maxChars }) : text;
     };
     prompt = promptFor(Infinity);
