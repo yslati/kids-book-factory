@@ -38,9 +38,10 @@ import { flushPendingCovers, storeCover } from '../lib/cover-store.js';
 import { resolveBook, shopifyConfigured } from '../lib/shopify.js';
 import { generateCover, generationConfigured } from '../lib/generate.js';
 import { buildCustomPrompt } from '../lib/custom-prompt.js';
-import { MAX_PROMPT_CHARS, withLikenessNotes } from '../lib/prompt.js';
+import { HEAD_AND_SKIN, MAX_PROMPT_CHARS, withFaceDescription } from '../lib/prompt.js';
 import { prepareChildPhoto } from '../lib/child-photo.js';
 import { checkFace, faceCheckError } from '../lib/face-check.js';
+import { withHeadGate } from '../lib/head-gate.js';
 import { verifyCustomerToken } from '../lib/customer-token.js';
 import { previewKey } from '../lib/object-names.js';
 import { withReporting } from '../lib/report.js';
@@ -145,13 +146,16 @@ async function generate(req, res, body, startedAt) {
     const book = await bookLoad;
     const childUrl = photo.url;
     const base = buildCustomPrompt(r);
-    // The face description and head-size rule only where the provider's prompt limit has room.
-    const promptFor = (maxChars) => (maxChars > MAX_PROMPT_CHARS ? withLikenessNotes(base, face && face.description) : base);
+    // The head-size rule and face description only where the provider's prompt limit has room.
+    const long = withFaceDescription(base + '\n\n' + HEAD_AND_SKIN, face && face.description);
+    const promptFor = (maxChars) => (maxChars > MAX_PROMPT_CHARS ? long : base);
     prompt = promptFor(Infinity);
-    const generated = await generateCover(book.coverUrl, childUrl, promptFor, {
+    // The head gate regenerates once when the painted head is far bigger
+    // than the reference cover's hero.
+    const generated = await withHeadGate(() => generateCover(book.coverUrl, childUrl, promptFor, {
       coverAspect: book.coverAspect,
       deadline: startedAt + GENERATION_BUDGET_MS
-    });
+    }), { coverUrl: book.coverUrl });
     prompt = generated.prompt || prompt;
 
     // Kept in R2, else in Upstash behind /api/cover (lib/cover-store.js).

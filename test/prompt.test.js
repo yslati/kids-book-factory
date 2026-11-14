@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  DEFAULT_PREVIEW_PROMPT, FIX_REASONS, HEAD_AND_SKIN, MAX_FIX_NOTE_CHARS, MAX_HERO_POSE_CHARS, buildPreviewPrompt, withFix, withHeroPose, withLikenessNotes
+  DEFAULT_PREVIEW_PROMPT, FIX_REASONS, HEAD_AND_SKIN, MAX_FIX_NOTE_CHARS, MAX_HERO_POSE_CHARS, OPENAI_PREVIEW_PROMPT, buildPreviewPrompt, withFaceDescription, withFix, withHeroPose
 } from '../lib/prompt.js';
 import { BOOK_LANGUAGES, resolveBookLanguage } from '../lib/book-languages.js';
 
@@ -128,12 +128,22 @@ test('leaves the prompt alone when the book has no hero pose', () => {
   assert.equal(withHeroPose('BASE', null), 'BASE');
 });
 
-test('likeness notes put the face description and head rule before LIKENESS', () => {
-  const out = withLikenessNotes('MAIN TASK - x\n\nLIKENESS - y', 'Oval face,\n  gap teeth.');
-  assert.ok(out.startsWith('MAIN TASK - x\n\nTHIS CHILD, AS THE PHOTO SHOWS THEM - Oval face, gap teeth. '));
-  assert.ok(out.includes('\n\n' + HEAD_AND_SKIN + '\n\nLIKENESS - y'));
-  // A prompt without LIKENESS (custom stories) gets them at the end; no description still adds the rule.
-  assert.equal(withLikenessNotes('CUSTOM', ''), 'CUSTOM\n\n' + HEAD_AND_SKIN);
+test('the face description goes just before LIKENESS, or at the end without it', () => {
+  const out = withFaceDescription('MAIN TASK - x\n\nLIKENESS - y', 'Oval face,\n  gap teeth.');
+  assert.ok(out.startsWith('MAIN TASK - x\n\nTHIS CHILD, AS THE PHOTO SHOWS THEM (identity only) - Oval face, gap teeth. '));
+  assert.ok(out.endsWith('pose.\n\nLIKENESS - y'));
+  assert.ok(withFaceDescription('CUSTOM', 'Round face.').startsWith('CUSTOM\n\nTHIS CHILD'));
+  assert.equal(withFaceDescription('CUSTOM', ''), 'CUSTOM');
   assert.match(HEAD_AND_SKIN, /no larger than the original hero's/);
-  assert.match(HEAD_AND_SKIN, /neck, arms, hands, legs and knees - takes the child's own skin tone/);
+});
+
+test('the OpenAI prompt carries pose, identity, head and name-safe sections', () => {
+  for (const section of ['HEAD POSE AND EXPRESSION COME FROM THE COVER', 'LIKENESS - FACIAL IDENTITY',
+    'HEAD, NECK AND BODY', 'HAIR AND HEADWEAR', 'EVERYONE ELSE STAYS', 'THE COVER IS LOCKED', 'FINAL CHECK']) {
+    assert.ok(OPENAI_PREVIEW_PROMPT.includes(section), section);
+  }
+  assert.match(OPENAI_PREVIEW_PROMPT, /90% the real child/);
+  assert.match(OPENAI_PREVIEW_PROMPT, /except the name and language changes requested below/);
+  // The face description lands inside it.
+  assert.ok(withFaceDescription(OPENAI_PREVIEW_PROMPT, 'Oval face.').includes('identity only) - Oval face.'));
 });
