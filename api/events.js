@@ -62,7 +62,9 @@ async function record(event, visitor) {
       await saveJourney(redis, event.checkout && event.checkout.orderId, event.clientId);
       return;
     }
-    const recorded = event.clientId ? await recordEvent(redis, event, { country: visitor.country, ownHosts: OWN_HOSTS }) : null;
+    // A first page view after consent may continue a cookieless visit.
+    const anonId = event.consented && event.name === 'page_viewed' ? await cookielessId(redis, visitor) : '';
+    const recorded = event.clientId ? await recordEvent(redis, event, { country: visitor.country, ownHosts: OWN_HOSTS, anonId }) : null;
     const sheet = storefrontRows(event, recorded, visitor);
     await Promise.all([
       postLiveEvent(event, recorded, visitor),
