@@ -62,7 +62,7 @@ import { chargeGeneration, checkRateLimit, clientIp } from '../lib/ratelimit.js'
 import { r2Configured } from '../lib/r2.js';
 import { resolveBook, shopifyConfigured } from '../lib/shopify.js';
 import { abandonPendingCover, generateCover, generationConfigured } from '../lib/generate.js';
-import { FIX_REASONS, MAX_FIX_NOTE_CHARS, buildPreviewPrompt, withFix } from '../lib/prompt.js';
+import { FIX_REASONS, MAX_FIX_NOTE_CHARS, MAX_PROMPT_CHARS, buildPreviewPrompt, withFaceDescription, withFix } from '../lib/prompt.js';
 import { prepareChildPhoto } from '../lib/child-photo.js';
 import { checkFace, faceCheckError } from '../lib/face-check.js';
 import { resolveBookLanguage } from '../lib/book-languages.js';
@@ -81,10 +81,11 @@ import { countPreview } from '../lib/visitor-counts.js';
 import { countEvent } from '../lib/event-stats.js';
 import { waitUntil } from '@vercel/functions';
 
-// vercel.json gives this function 75s. Generation must finish within 60s of
-// the request arriving, leaving time to copy the cover to R2 and respond
-// before the storefront stops waiting (70s on the product page).
-const GENERATION_BUDGET_MS = 60000;
+// vercel.json gives this function 90s. Generation must finish within 75s of
+// the request arriving (a 2.6 cover takes 35-38s after ~5s of photo work, so
+// OpenAI keeps its turn even when slow), leaving time to copy the cover to
+// R2 and respond before the storefront stops waiting (90s).
+const GENERATION_BUDGET_MS = 75000;
 
 export default withReporting(handler);
 
@@ -277,11 +278,13 @@ async function runPreview(req, res, p) {
   // 2. The cover and prompt come from the product's own metafields while the
   //    photo is cropped to the face (and shrunk if full-size). A covered or
   //    unreadable face is refused before the allowance is charged or anything
-  //    is paid for; a fix keeps the photo its cover was made from.
+  //    is paid for; a fix keeps the photo its cover was made from, so it only
+  //    takes the face description from the same look.
   const bookLoad = resolveBook(themeId);
   bookLoad.catch(() => { /* awaited below */ });
   const photo = await prepareChildPhoto(photoKey);
-  const refused = !fix && photo.image ? faceCheckError(await checkFace(photo.image)) : null;
+  const face = photo.image ? await checkFace(photo.image, { detailed: Boolean(fix) }) : null;
+  const refused = fix ? null : faceCheckError(face);
   if (!refused) {
     const allowed = await chargeGeneration(req, customer);
     if (!allowed.success) {
@@ -306,18 +309,20 @@ async function runPreview(req, res, p) {
     book = await bookLoad;
     const childUrl = photo.url;
     const base = buildPreviewPrompt(book.prompt, { language, childName, age: ageText });
-    // A fix line fits each provider's own prompt limit (lib/generate.js).
-    const promptFor = (maxChars) => (fix ? withFix(base, fix, childName, { maxChars }) : base);
+    // Sized for each provider's own prompt limit (lib/generate.js): the face
+    // description only where there is room for it, the fix line cut to fit.
+    const promptFor = (maxChars) => {
+      const text = maxChars > MAX_PROMPT_CHARS ? withFaceDescription(base, face && face.description) : base;
+      return fix ? withFix(text, fix, childName, { maxChars }) : text;
+    };
     prompt = promptFor(Infinity);
 
     // 3. Generate, falling back down the model chain on failure. Only the
     //    product page polls for a queued cover, and only with Redis to hold it.
-    //    A fix, the parent's last chance before leaving, gets high quality.
     const generated = await generateCover(book.coverUrl, childUrl, promptFor, {
       coverAspect: book.coverAspect,
       deadline: startedAt + GENERATION_BUDGET_MS,
-      keepPending: !fix && Boolean(getRedis()),
-      quality: fix ? 'high' : undefined
+      keepPending: !fix && Boolean(getRedis())
     });
 
     // 4. Persist and record it, with the prompt the cover was made from.

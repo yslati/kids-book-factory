@@ -4,38 +4,21 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { attemptLabel, raiseQuality, usableAttempts, runAttempts, FAL_LOW_BALANCE_USD } from '../lib/provider-order.js';
+import { attemptLabel, usableAttempts, runAttempts, FAL_LOW_BALANCE_USD } from '../lib/provider-order.js';
 
-test('a free fix raises every medium attempt to high and leaves the rest', () => {
-  const chain = [
-    { provider: 'higgsfield', model: 'sunburst', quality: 'medium' },
-    { provider: 'higgsfield', model: 'flare', quality: 'medium' },
-    { provider: 'higgsfield', model: '2.0', quality: 'low' },
-    { provider: 'fal' }
-  ];
-  assert.deepEqual(raiseQuality(chain, 'high').map((a) => a.quality), ['high', 'high', 'low', undefined]);
-  assert.equal(chain[0].quality, 'medium', 'the chain itself is not changed');
-  assert.equal(raiseQuality(chain, undefined), chain);
-});
-
-test('a raised attempt drops the time cap that was sized for medium', () => {
-  const [raised] = raiseQuality([{ provider: 'openai', quality: 'medium', maxMs: 35000 }], 'high');
-  assert.deepEqual(raised, { provider: 'openai', quality: 'high' });
-});
-
-test('an attempt with maxMs gets at most that long, the next one the rest', async () => {
+test('a slow first attempt gets all the time; the next runs only after an error', async () => {
   let clock = 0;
   const given = [];
   const out = await runAttempts(
-    [{ provider: 'openai', maxMs: 35000 }, { provider: 'higgsfield' }],
+    [{ provider: 'openai' }, { provider: 'higgsfield' }],
     async (attempt, timeoutMs) => {
       given.push(timeoutMs);
-      if (attempt.provider === 'openai') { clock += timeoutMs; throw new Error('timeout'); }
+      if (attempt.provider === 'openai') { clock += 20000; throw new Error('openai-500'); }
       return 'https://cover';
     },
-    { deadline: 60000, minAttemptMs: 15000, now: () => clock }
+    { deadline: 80000, minAttemptMs: 15000, now: () => clock }
   );
-  assert.deepEqual(given, [35000, 25000]);
+  assert.deepEqual(given, [80000, 60000]);
   assert.equal(out.attempt.provider, 'higgsfield');
 });
 

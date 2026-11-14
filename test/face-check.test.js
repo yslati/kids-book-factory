@@ -15,10 +15,10 @@ function answering(content, { status = 200 } = {}) {
   return { fetchImpl, calls };
 }
 
-test('returns the model\'s verdict and note, sending the photo as a data URL', async () => {
+test('returns the verdict, note and face description, sending the photo as a data URL', async () => {
   process.env.OPENAI_KEY = 'test';
-  const { fetchImpl, calls } = answering(JSON.stringify({ verdict: 'covered', note: 'A helmet cage hides the face.' }));
-  assert.deepEqual(await checkFace(jpeg, { fetchImpl }), { verdict: 'covered', note: 'A helmet cage hides the face.' });
+  const { fetchImpl, calls } = answering(JSON.stringify({ verdict: 'covered', note: 'A helmet cage hides the face.', description: 'Round face,\n light skin.' }));
+  assert.deepEqual(await checkFace(jpeg, { fetchImpl }), { verdict: 'covered', note: 'A helmet cage hides the face.', description: 'Round face, light skin.' });
   assert.equal(calls.length, 1);
   assert.match(calls[0].body.messages[0].content[0].image_url.url, /^data:image\/jpeg;base64,/);
   assert.equal(calls[0].body.response_format.json_schema.strict, true);
