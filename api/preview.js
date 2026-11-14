@@ -58,7 +58,7 @@ import { getRedis } from '../lib/redis.js';
 import { chargeGeneration, checkRateLimit, clientIp } from '../lib/ratelimit.js';
 import { r2Configured } from '../lib/r2.js';
 import { resolveBook, shopifyConfigured } from '../lib/shopify.js';
-import { abandonPendingCover, generateCover, generationConfigured, promptLimit } from '../lib/generate.js';
+import { abandonPendingCover, generateCover, generationConfigured } from '../lib/generate.js';
 import { FIX_REASONS, MAX_FIX_NOTE_CHARS, buildPreviewPrompt, withFix } from '../lib/prompt.js';
 import { prepareChildPhoto } from '../lib/child-photo.js';
 import { checkFace, faceCheckError } from '../lib/face-check.js';
@@ -296,20 +296,23 @@ async function runPreview(req, res, p) {
     if (refused) throw refused;
     book = await bookLoad;
     const childUrl = photo.url;
-    prompt = buildPreviewPrompt(book.prompt, { language, childName, age: ageText });
-    if (fix) prompt = withFix(prompt, fix, childName, { maxChars: promptLimit() });
+    const base = buildPreviewPrompt(book.prompt, { language, childName, age: ageText });
+    // A fix line fits each provider's own prompt limit (lib/generate.js).
+    const promptFor = (maxChars) => (fix ? withFix(base, fix, childName, { maxChars }) : base);
+    prompt = promptFor(Infinity);
 
     // 3. Generate, falling back down the model chain on failure. Only the
     //    product page polls for a queued cover, and only with Redis to hold it.
     //    A fix, the parent's last chance before leaving, gets high quality.
-    const generated = await generateCover(book.coverUrl, childUrl, prompt, {
+    const generated = await generateCover(book.coverUrl, childUrl, promptFor, {
       coverAspect: book.coverAspect,
       deadline: startedAt + GENERATION_BUDGET_MS,
       keepPending: !fix && Boolean(getRedis()),
       quality: fix ? 'high' : undefined
     });
 
-    // 4. Persist and record it.
+    // 4. Persist and record it, with the prompt the cover was made from.
+    prompt = generated.prompt;
     const previewUrl = await finishPreview(req, p, { book, generated, prompt, feed });
     res.status(200).json({
       preview_url: previewUrl,
@@ -322,7 +325,10 @@ async function runPreview(req, res, p) {
     return true;
   } catch (err) {
     if (err && err.pending) {
-      const place = await queueCover(req, p, { book, prompt, feed, counts, pending: err.pending });
+      // The prompt is stored once, beside the job, not inside it.
+      const { prompt: sent, ...pending } = err.pending;
+      prompt = sent || prompt;
+      const place = await queueCover(req, p, { book, prompt, feed, counts, pending });
       if (place) {
         res.status(200).json({ generation_id: generationId, status: 'queued', remaining: p.remaining, ...place });
         return true;
