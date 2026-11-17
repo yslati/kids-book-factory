@@ -39,8 +39,8 @@ function pageTarget(fields) {
 test('a ready cover gets a working link at once', async () => {
   const redis = memoryRedis();
   const url = await mintPreviewLink(redis, CARD);
-  assert.match(url, /^https:\/\/s\.booktokids\.com\/emma-[a-z2-9]{6}$/);
-  const row = JSON.parse(redis.data.get(linkKey(url.split('/').pop())));
+  assert.match(url, /^https:\/\/s\.booktokids\.com\/emma-[a-z2-9]{6}\?team=1$/, 'the team\'s uncounted copy');
+  const row = JSON.parse(redis.data.get(linkKey(new URL(url).pathname.slice(1))));
   assert.equal(row.childName, 'Emma');
   assert.equal(row.coverUrl, COVER);
   assert.equal(parseShareTarget(row.url, OPTS).generationId, 'k3x9p2m7q1');
@@ -48,7 +48,7 @@ test('a ready cover gets a working link at once', async () => {
 
 test('the preview page takes the minted link once, with its own URL', async () => {
   const redis = memoryRedis();
-  const id = (await mintPreviewLink(redis, CARD)).split('/').pop();
+  const id = new URL(await mintPreviewLink(redis, CARD)).pathname.slice(1);
   const page = pageTarget({ t: 'the-winning-goal', n: 'Emma', u: COVER, g: 'k3x9p2m7q1', c: '2026-11-17' });
   assert.equal(await claimPreviewLink(redis, page), id);
   assert.equal(JSON.parse(redis.data.get(linkKey(id))).url, page.url);

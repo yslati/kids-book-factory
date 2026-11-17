@@ -6,7 +6,8 @@
 //   The same URL always gets the same link back while it lives, and a
 //   cover's first request gets the link minted with it (lib/share-store.js).
 // GET  /<id>        → 302 to the stored preview page, tagged utm_source=share
-//   so the visit counts as one from a share. Link-preview bots get a small
+//   so the visit counts as one from a share. With ?team=1 (the copy in
+//   #previews and the sheet) it is neither tagged nor counted. Link-preview bots get a small
 //   page with the child's cover and name as OG tags instead, which the
 //   storefront itself cannot render per preview. Each open is counted, added
 //   to the sheet's Shares tab and, for a link's first few, posted to #previews.
@@ -26,7 +27,7 @@ import { withReporting } from '../lib/report.js';
 import {
   SHARE_TTL_SECONDS, isShareSlug, parseShareTarget, renderExpiredPage, renderSharePage
 } from '../lib/share-link.js';
-import { claimPreviewLink, linkKey, parseRow, shareBase, storeNewLink, urlKey } from '../lib/share-store.js';
+import { claimPreviewLink, linkKey, parseRow, shareBase, storeNewLink, TEAM_PARAM, urlKey } from '../lib/share-store.js';
 import { appendRows, shareRow, TABS } from '../lib/sheet.js';
 import { storeOrigin } from '../lib/store-links.js';
 import { resolveAudience } from '../lib/audience.js';
@@ -153,6 +154,7 @@ async function open(req, res) {
   if (!target) return sendHtml(res, renderExpiredPage({ storeUrl: storeUrl() }));
 
   if (!isbot(req.headers['user-agent'] || '')) {
+    if (req.query && req.query[TEAM_PARAM] === '1') return res.redirect(302, target.url);
     waitUntil(recordOpen(req, id, target));
     return res.redirect(302, sharedVisitUrl(target.url));
   }
