@@ -27,6 +27,11 @@ import { postLiveEvent } from '../lib/event-feed.js';
 import { appendRows, chatRow, storefrontRows, TABS } from '../lib/sheet.js';
 import { orderWebhookOn } from '../lib/shopify-order.js';
 import { chatOpened, chatRecord, postChatOpened } from '../lib/chat-feed.js';
+import { Audience, resolveAudience } from '../lib/audience.js';
+import { recordBotVisit } from '../lib/bot-feed.js';
+
+// Events that are a page view, for the bot streams.
+const PAGE_VIEWS = ['page_viewed', 'crawler_seen'];
 
 // A visitor sends a few events per page; this only stops a flood.
 const LIMIT_WINDOW_MS = 10 * 60 * 1000;
@@ -54,6 +59,15 @@ function overLimit(ip, max = LIMIT_EVENTS) {
 async function record(event, visitor) {
   try {
     const redis = getRedis();
+    // Bots and crawlers never count as visitors: their page views go to the
+    // bot streams (lib/bot-feed.js), their other events are only duplicates.
+    const who = await resolveAudience(visitor);
+    if (who.audience !== Audience.human) {
+      if (PAGE_VIEWS.includes(event.name)) await recordBotVisit(redis, who, visitor, { page: event.path, referrer: event.referrer });
+      return;
+    }
+    // A person's browser that merely looks automated to the beacon.
+    if (event.name === 'crawler_seen') return;
     if (!event.consented) event.clientId = await cookielessId(redis, visitor);
     // Shopify's order webhook (api/shopify-webhook.js) reports every order,
     // signed; the pixel's can be missed or faked, so it only tells the

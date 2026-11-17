@@ -30,6 +30,8 @@ import {
 } from '../lib/share-link.js';
 import { appendRows, shareRow, TABS } from '../lib/sheet.js';
 import { storeOrigin } from '../lib/store-links.js';
+import { resolveAudience } from '../lib/audience.js';
+import { recordBotVisit } from '../lib/bot-feed.js';
 
 const SHARE_BASE = (process.env.SHARE_BASE_URL || '').replace(/\/+$/, '');
 const COVER_BASE = process.env.R2_PUBLIC_BASE_URL || '';
@@ -83,6 +85,18 @@ async function recordOpen(req, id, target) {
     ]);
   } catch (e) {
     console.warn('[share] open not recorded:', (e && e.message) || e);
+  }
+}
+
+async function recordUnfurl(req, redis, id) {
+  try {
+    const visitor = visitorOf(req);
+    await Promise.all([
+      countEvent(redis, 'share_unfurled'),
+      recordBotVisit(redis, await resolveAudience(visitor), visitor, { page: SHARE_BASE + '/' + id })
+    ]);
+  } catch (e) {
+    console.warn('[share] preview not recorded:', (e && e.message) || e);
   }
 }
 
@@ -160,7 +174,8 @@ async function open(req, res) {
     return res.redirect(302, sharedVisitUrl(target.url));
   }
   // A chat app fetching the link to show its preview: the link was just sent.
-  waitUntil(countEvent(redis, 'share_unfurled'));
+  // Counted, and shown in the crawler stream with the app's name.
+  waitUntil(recordUnfurl(req, redis, id));
   return sendHtml(res, renderSharePage({
     shortUrl: SHARE_BASE + '/' + id,
     target: target.url,

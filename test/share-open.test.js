@@ -9,6 +9,7 @@ process.env.SHARE_BASE_URL = 'https://s.booktokids.com';
 process.env.UPSTASH_REDIS_REST_URL = 'https://upstash.test';
 process.env.UPSTASH_REDIS_REST_TOKEN = 'token';
 process.env.DISCORD_WEBHOOK_PREVIEWS = 'https://discord.com/api/webhooks/5/previews-token';
+process.env.DISCORD_WEBHOOK_CRAWLERS = 'https://discord.com/api/webhooks/6/crawlers-token';
 
 const { default: handler } = await import('../api/share.js');
 const { resetDiscordThrottle, setDiscordOutbox } = await import('../lib/discord.js');
@@ -83,7 +84,7 @@ test('a person opening a shared link lands tagged as a share, and the open is co
   assert.equal(calls.discord[0].fields.find((f) => f.name === 'Opens').value, '1st open of this link');
 });
 
-test('a chat app fetching the link only counts as a chat preview', async (t) => {
+test('a chat app fetching the link counts as a chat preview and posts to the crawler stream, not #previews', async (t) => {
   const calls = stub(t);
   const res = response();
   await handler(request('WhatsApp/2.23.20.0'), res);
@@ -91,5 +92,8 @@ test('a chat app fetching the link only counts as a chat preview', async (t) => 
   assert.equal(res.statusCode, 200);
   assert.match(res.body, /og:/);
   assert.equal(calls.redis.some(([cmd]) => cmd === 'incr'), false);
-  assert.equal(calls.discord.length, 0);
+  assert.ok(calls.redis.some(([cmd, key]) => cmd === 'hincrby' && /count$/.test(key)), 'counted as share_unfurled');
+  assert.equal(calls.discord.length, 1);
+  assert.equal(calls.discord[0].title, '🕷️ WhatsApp · link preview');
+  assert.equal(calls.discord[0].fields.find((f) => f.name === 'Page').value, 'https://s.booktokids.com/lina-x7k2pq');
 });

@@ -103,7 +103,7 @@ test('the daily summary: headline, funnel, conversion and top lists', async (t) 
   const embed = summaryEmbed({
     day: '2026-10-19',
     visitors: 312,
-    count: { visits: 401, page_viewed: 1240, product_viewed: 520, preview_started: 48, preview_ready: 45, preview_failed: 3, product_added_to_cart: 12, checkout_started: 7, checkout_completed: 3, collection_viewed: 90, search_submitted: 4, cart_viewed: 20 },
+    count: { visits: 401, page_viewed: 1240, product_viewed: 520, preview_started: 48, preview_ready: 45, preview_failed: 3, product_added_to_cart: 12, checkout_started: 7, checkout_completed: 3, collection_viewed: 90, search_submitted: 4, cart_viewed: 20, crawler_visits: 7, bot_visits: 3 },
     pages: { '/': 180, '/products/the-winning-goal': 230, '/collections/girls': 90 },
     sources: { 'instagram / paid': 180, direct: 95, 'google.com': 60 },
     countries: { FR: 150, MA: 80 },
@@ -120,9 +120,11 @@ test('the daily summary: headline, funnel, conversion and top lists', async (t) 
   assert.equal(f['Top pages'].split('\n')[0], '`/products/the-winning-goal` · 230');
   assert.equal(f['Top countries'], '🇫🇷 France · 150\n🇲🇦 Morocco · 80');
   assert.equal(f['Orders by source'], '`instagram / paid` · 2\n`direct` · 1');
+  assert.equal(f.Bots, '7 crawler page views · 3 bot page views (not counted above)');
 
   const empty = fieldsOf(summaryEmbed({ day: '2026-10-19', visitors: 0, count: {}, pages: {}, sources: {}, countries: {}, revenue: {}, orderSources: {} }));
   assert.equal(empty['Top sources'], '—');
+  assert.equal(empty.Bots, '0 crawler page views · 0 bot page views (not counted above)');
   assert.equal(empty.Conversion, '— of visits ordered\n— of previews reached the cart');
   assert.equal(empty['Orders by source'], undefined);
 

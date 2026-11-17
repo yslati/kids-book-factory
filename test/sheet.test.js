@@ -223,7 +223,7 @@ test('a Daily row has the funnel, revenue and top lists', () => {
   const row = dailyRow({
     day: '2026-10-24',
     visitors: 120,
-    count: { visits: 150, page_viewed: 600, product_viewed: 200, preview_started: 12, preview_ready: 11, preview_failed: 1, product_added_to_cart: 4, checkout_started: 3, checkout_completed: 2, share_clicked: 3, share_opened: 5, share_unfurled: 2 },
+    count: { visits: 150, page_viewed: 600, product_viewed: 200, preview_started: 12, preview_ready: 11, preview_failed: 1, product_added_to_cart: 4, checkout_started: 3, checkout_completed: 2, share_clicked: 3, share_opened: 5, share_unfurled: 2, crawler_visits: 7, bot_visits: 3 },
     pages: { '/': 300, '/products/a': 50 },
     books: { 'views:a': 50, 'carts:A': 2 },
     searches: { unicorn: 4 },
@@ -237,6 +237,7 @@ test('a Daily row has the funnel, revenue and top lists', () => {
     Searches: 0, 'Cart views': 0, 'Previews started': 12, 'Previews ready': 11, 'Previews failed': 1,
     'Added to cart': 4, 'Checkouts started': 3, Orders: 2, Revenue: 89.98, Currency: 'USD',
     'Share clicks': 3, 'Shared links opened': 5, 'Chat link previews': 2,
+    'Crawler visits': 7, 'Bot visits': 3,
     'Top sources': 'google (80), direct (70)', 'Orders by source': 'google (2)',
     'Top books': 'a (50 views, 0 previews, 0 carts, 0 orders); A (0 views, 0 previews, 2 carts, 0 orders)', 'Top searches': 'unicorn (4)',
     'Top pages': '/ (300), /products/a (50)', 'Top countries': 'France (90), United States (30)'
