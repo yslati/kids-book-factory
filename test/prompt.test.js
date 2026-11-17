@@ -222,11 +222,11 @@ test('the age sets the face, never the hero\'s body or head size', () => {
 
 test('only the hero\'s name is personalised; team names and numbers stay', () => {
   const prompt = buildPreviewPrompt('BASE', { language: resolveBookLanguage('en'), childName: 'Yassin', age: '' });
-  assert.match(prompt, /Only the hero's name changes: team names on jerseys, banners and scoreboards, numbers and other names stay as they are\./);
+  assert.match(prompt, /Only the hero's name changes: other words on clothes, signs and banners, numbers and other names stay as they are\./);
 });
 
-test('a sports kit in the photo colours and numbers the hero\'s own kit only', () => {
-  const out = withPhotoTraits('BASE', { outfit: 'yellow basketball jersey, number 10' });
-  assert.match(out, /- Sports kit in the photo: yellow basketball jersey, number 10\. If the hero wears a sports jersey or kit, it takes this main colour and number/);
-  assert.match(out, /everyone else keeps their own kit\. If the hero wears no sports kit, ignore this\./);
+test('a themed outfit in the photo carries over only to the same kind of outfit', () => {
+  const out = withPhotoTraits('BASE', { outfit: 'white chef jacket with red buttons' });
+  assert.match(out, /- Outfit in the photo: white chef jacket with red buttons\. If the hero wears the same kind of outfit, it takes these colours and details/);
+  assert.match(out, /everyone else keeps theirs\. Otherwise ignore this\./);
 });
