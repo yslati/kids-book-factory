@@ -77,7 +77,7 @@ function book(overrides = {}) {
 }
 
 test('a Book previews row carries the answers, the prompt and the outcome', () => {
-  const row = previewRow(req, book(), { coverUrl: COVER, bookTitle: 'The Winning Goal', attempt: ATTEMPT, prompt: 'Paint Emma...' });
+  const row = previewRow(req, book(), { coverUrl: COVER, bookTitle: 'The Winning Goal', attempt: ATTEMPT, prompt: 'Paint Emma...', shareUrl: 'https://s.booktokids.com/emma-x7k2pq' });
   assert.match(row.Date, /^\d{4}-\d\d-\d\dT/);
   assert.match(String(row.Seconds), /^21\.\d$/);
   assert.deepEqual(without(row, 'Date', 'Seconds'), {
@@ -97,6 +97,7 @@ test('a Book previews row carries the answers, the prompt and the outcome', () =
     ...PLACE,
     Error: '',
     Generation: 'k3x9p2m7q1',
+    'Share link': 'https://s.booktokids.com/emma-x7k2pq',
     Prompt: 'Paint Emma...'
   });
   assert.deepEqual(Object.keys(row).slice(0, 3), ['Date', 'Status', 'Book']);
@@ -110,6 +111,7 @@ test('a failed preview keeps the prompt and the error, without cover or model', 
   assert.equal(row.Age, '');
   assert.equal(row.Cover, '');
   assert.equal(row.Model, '');
+  assert.equal(row['Share link'], '');
   assert.equal(row.Error, 'higgsfield-timeout');
   assert.equal(row.Prompt, 'Paint Emma...');
   assert.equal(row.Customer, 'Signed in · 7212345678');
