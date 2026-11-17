@@ -215,5 +215,18 @@ test('the OpenAI prompt carries pose, identity, head and name-safe sections', ()
 test('the age sets the face, never the hero\'s body or head size', () => {
   const prompt = buildPreviewPrompt('BASE', { language: resolveBookLanguage('en'), childName: '', age: '3' });
   assert.match(prompt, /The child is 3 years old\. Paint a face of that age from the photo's features/);
-  assert.match(prompt, /The hero's body and head size stay as on the cover\./);
+  assert.match(prompt, /Head size: the child's head, hair included, is no bigger than the hero's and fits the body\./);
+  // The head rule goes in even without an age.
+  assert.match(buildPreviewPrompt('BASE', { language: resolveBookLanguage('en'), childName: '', age: '' }), /Head size:/);
+});
+
+test('only the hero\'s name is personalised; team names and numbers stay', () => {
+  const prompt = buildPreviewPrompt('BASE', { language: resolveBookLanguage('en'), childName: 'Yassin', age: '' });
+  assert.match(prompt, /Only the hero's name changes: team names on jerseys, banners and scoreboards, numbers and other names stay as they are\./);
+});
+
+test('a sports kit in the photo colours and numbers the hero\'s own kit only', () => {
+  const out = withPhotoTraits('BASE', { outfit: 'yellow basketball jersey, number 10' });
+  assert.match(out, /- Sports kit in the photo: yellow basketball jersey, number 10\. If the hero wears a sports jersey or kit, it takes this main colour and number/);
+  assert.match(out, /everyone else keeps their own kit\. If the hero wears no sports kit, ignore this\./);
 });
