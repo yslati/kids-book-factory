@@ -16,7 +16,8 @@ const TRAITS = {
   hair: 'short light blond hair',
   hair_hidden: true,
   skin: 'fair skin',
-  marks: ['gap between the front teeth', '', 'a', 'b', 'c', 'd']
+  marks: ['gap between the front teeth', '', 'a', 'b', 'c', 'd'],
+  outfit: 'yellow basketball jersey, number 10.'
 };
 
 // Answers each call by the name of the JSON schema it asks for; failing names one to answer 500.
@@ -50,7 +51,8 @@ test('asks nano for the verdict and mini for what the photo shows, both with the
     hair: 'short light blond hair',
     hairHidden: true,
     skin: 'fair skin',
-    marks: ['gap between the front teeth', 'a', 'b', 'c']
+    marks: ['gap between the front teeth', 'a', 'b', 'c'],
+    outfit: 'yellow basketball jersey, number 10'
   });
   const byKind = Object.fromEntries(calls.map((c) => [c.kind, c.body]));
   assert.equal(byKind.face_check.model, 'gpt-5.4-nano');
