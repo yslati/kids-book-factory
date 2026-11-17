@@ -6,11 +6,11 @@
 // Vercel's Hobby plan caps a deployment at 12.
 //
 // Generate body: { photo_key, generation_id, reference, world, gender,
-//   child_name, age?, occasion?, language?, brief, turnstile_token?, customer_id?,
+//   child_name, age?, occasion?, language?, locale?, brief, turnstile_token?, customer_id?,
 //   token_date?, customer_token? }
 //   → { preview_url, generation_id, status: 'ready' }
 //   429 → { error: 'rate-limited', login_required, remaining: 0 }
-//   422 → { error: 'face-not-clear', reason } (costs no generation)
+//   422 → { error: 'face-not-clear', reason, tip } (costs no generation)
 // Cart body: { action: 'cart', generation_id, variant, price, details? } → 204
 //
 // Generate flow:
@@ -38,9 +38,9 @@ import { flushPendingCovers, storeCover } from '../lib/cover-store.js';
 import { resolveBook, shopifyConfigured } from '../lib/shopify.js';
 import { generateCover, generationConfigured } from '../lib/generate.js';
 import { buildCustomPrompt } from '../lib/custom-prompt.js';
-import { HEAD_AND_SKIN, MAX_PROMPT_CHARS, withFaceDescription } from '../lib/prompt.js';
-import { prepareChildPhoto } from '../lib/child-photo.js';
-import { checkFace, faceCheckError } from '../lib/face-check.js';
+import { HEAD_AND_SKIN, MAX_PROMPT_CHARS, Scene, withFaceDescription, withPhotoTraits } from '../lib/prompt.js';
+import { faceTooSmall, prepareChildPhoto } from '../lib/child-photo.js';
+import { NO_TRAITS, checkFace, faceCheckError } from '../lib/face-check.js';
 import { verifyCustomerToken } from '../lib/customer-token.js';
 import { previewKey } from '../lib/object-names.js';
 import { withReporting } from '../lib/report.js';
@@ -115,8 +115,10 @@ async function generate(req, res, body, startedAt) {
   const bookLoad = resolveBook(r.reference);
   bookLoad.catch(() => { /* awaited below */ });
   const photo = await prepareChildPhoto(r.photoKey);
-  const face = photo.image ? await checkFace(photo.image) : null;
-  const refused = faceCheckError(face);
+  const locale = /^[A-Za-z]{2}(-[A-Za-z]{2})?$/.test(String(body.locale || '')) ? String(body.locale) : 'en';
+  const face = photo.image ? await checkFace(photo.image, { locale }) : null;
+  const refused = faceCheckError(face, { tooSmall: faceTooSmall(photo) });
+  const traits = (face && face.traits) || NO_TRAITS;
   if (!refused) {
     const rl = await checkRateLimit(req, customer.valid ? 'custom-cust' : 'custom', customer.valid ? customer.customerId : null);
     const capped = await checkRateLimit(req, 'preview-ip-cap');
@@ -145,9 +147,10 @@ async function generate(req, res, body, startedAt) {
     const book = await bookLoad;
     const childUrl = photo.url;
     const base = buildCustomPrompt(r);
-    // The head-size rule and face description only where the provider's prompt limit has room.
-    const long = withFaceDescription(base + '\n\n' + HEAD_AND_SKIN, face && face.description);
-    const promptFor = (maxChars) => (maxChars > MAX_PROMPT_CHARS ? long : base);
+    // The photo rules, head-size rule and face description where the provider's prompt limit has room.
+    const short = withPhotoTraits(base, traits, { scene: Scene.NEW });
+    const long = withPhotoTraits(withFaceDescription(base + '\n\n' + HEAD_AND_SKIN, traits.description), traits, { scene: Scene.NEW });
+    const promptFor = (maxChars) => (maxChars > MAX_PROMPT_CHARS ? long : (short.length <= maxChars ? short : base));
     prompt = promptFor(Infinity);
     const generated = await generateCover(book.coverUrl, childUrl, promptFor, {
       coverAspect: book.coverAspect,
@@ -188,7 +191,7 @@ async function generate(req, res, body, startedAt) {
     feed.done({ error: detail });
     record({ error: detail, prompt });
     if (code === 'face-not-clear') {
-      return res.status(422).json({ error: code, status: 'failed', reason: err.reason });
+      return res.status(422).json({ error: code, status: 'failed', reason: err.reason, tip: err.tip || '' });
     }
     if (code === 'product-not-found' || code === 'cover-missing') {
       return res.status(422).json({ error: code, status: 'failed' });

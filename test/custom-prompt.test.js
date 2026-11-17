@@ -23,7 +23,7 @@ test('quotes the idea as a description and names the world, occasion, child and 
   assert.match(prompt, /includes the child's first name, "Lina", spelled exactly/);
   assert.match(prompt, /"LINA AND THE \.\.\."/);
   assert.match(prompt, /the child is a girl, 5 years old/);
-  assert.match(prompt, /75% the real child and 25% our animation style/);
+  assert.match(prompt, /70% the real child and 30% our animation style/);
   assert.match(prompt, /Never copy the photo's straight-on pose or its expression/);
   assert.match(prompt, /even when the photo shows a neutral, serious or open-mouthed face/);
   assert.match(prompt, /Only the hero is this child/);

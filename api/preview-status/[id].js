@@ -1,5 +1,5 @@
 // GET /api/preview-status/<generation_id>
-// → { status: 'ready', preview_url } | { status: 'pending', queue_position? }
+// → { status: 'ready', preview_url, fix_options } | { status: 'pending', queue_position? }
 //   | { status: 'failed' }
 //
 // The storefront polls this every 3s after /preview answered 'queued': the
@@ -46,7 +46,7 @@ async function handler(req, res) {
       const { p, feed } = resume(entry);
       return finishPreview(entry.request, p, {
         book: entry.book, generated: { url, attempt: entry.pending.attempt }, prompt: entry.prompt, feed
-      });
+      }).then((done) => done.url);
     },
     async fail(entry, error) {
       if (error === 'higgsfield-expired') await abandonPendingCover(entry.pending);
@@ -61,7 +61,14 @@ async function handler(req, res) {
   // another generation on the same photo.
   if (result.status === 'failed') {
     const record = (await readPreviewRecord(redis, id)) || (await readCustomStory(redis, id));
-    if (record && record.coverUrl) return res.status(200).json({ status: 'ready', preview_url: record.coverUrl });
+    if (record && record.coverUrl) {
+      return res.status(200).json({ status: 'ready', preview_url: record.coverUrl, fix_options: record.fixOptions || [] });
+    }
+  }
+  // A queued cover's fix buttons are on the record its finish step wrote.
+  if (result.status === 'ready') {
+    const record = await readPreviewRecord(redis, id).catch(() => null);
+    return res.status(200).json({ ...result, fix_options: (record && record.fixOptions) || [] });
   }
   return res.status(200).json(result);
 }

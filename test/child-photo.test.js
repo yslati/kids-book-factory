@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
-import { MAX_PX, cropToFace, faceKey, resizedKey, shrinkPhoto } from '../lib/child-photo.js';
+import { MAX_PX, MIN_FACE_PX, cropToFace, faceKey, faceTooSmall, resizedKey, shrinkPhoto } from '../lib/child-photo.js';
 import { PORTRAIT_FACE_H, cropBox, plausibleFace } from '../lib/face-crop.js';
 
 function photo(width, height, { format = 'jpeg', orientation } = {}) {
@@ -97,12 +97,32 @@ test('cropToFace cuts the detected region out of the upright photo', async () =>
   };
   const out = await cropToFace(buf, { detect });
   assert.deepEqual([seen.width, seen.height], [600, 800], 'the detector sees the upright photo');
-  const meta = await sharp(out).metadata();
+  const meta = await sharp(out.image).metadata();
   assert.equal(meta.format, 'jpeg');
   assert.ok(meta.height < 800 && meta.height > 120 * 3, `crop height ${meta.height}`);
   assert.ok(meta.width <= 600);
+  assert.equal(out.faceHeightPx, 120);
+});
+
+test('a small face in a large photo is cropped from the 2048px copy, so it keeps its detail', async () => {
+  // A face 6% of a 3000x4000 photo: 61px in the 1024px copy, 123px in the 2048px one.
+  const out = await cropToFace(await photo(3000, 4000), { detect: async () => ({ x: 0.47, y: 0.3, w: 0.06, h: 0.06 }) });
+  const meta = await sharp(out.image).metadata();
+  assert.ok(meta.height > 400 && meta.height <= MAX_PX, `crop height ${meta.height}`);
+  assert.equal(out.faceHeightPx, 123);
+});
+
+test('a portrait is measured but not cropped', async () => {
+  const out = await cropToFace(await photo(600, 800), { detect: async () => ({ x: 0.3, y: 0.2, w: 0.4, h: 0.4 }) });
+  assert.deepEqual(out, { image: null, faceHeightPx: 320 });
 });
 
 test('cropToFace gives null when no face is found, so the caller falls back', async () => {
   assert.equal(await cropToFace(await photo(600, 800), { detect: async () => null }), null);
+});
+
+test('only a measured face under the minimum is too small', () => {
+  assert.equal(faceTooSmall({ faceHeightPx: MIN_FACE_PX - 1 }), true);
+  assert.equal(faceTooSmall({ faceHeightPx: MIN_FACE_PX }), false);
+  assert.equal(faceTooSmall({ faceHeightPx: null }), false);
 });
