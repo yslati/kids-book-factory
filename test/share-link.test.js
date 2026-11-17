@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  isShareSlug, newShareSlug, parseShareTarget, renderExpiredPage, renderSharePage
+  isShareSlug, newShareSlug, parseShareTarget, previewPageUrl, renderExpiredPage, renderSharePage
 } from '../lib/share-link.js';
 
 const STORE = 'https://booktokids.com';
@@ -99,4 +99,21 @@ test('the expired page links back to the store', () => {
   assert.equal(status, 410);
   assert.ok(html.includes('href="' + STORE + '"'));
   assert.equal(renderExpiredPage({ storeUrl: STORE, status: 503 }).status, 503);
+});
+
+test('a page URL built for a cover reads back like the theme\'s own', () => {
+  const cover = BUCKET + '/previews/emma_5_en_the-winning-goal_k3x9p2m7q1.jpg';
+  const url = previewPageUrl(STORE, {
+    themeId: 'the-winning-goal', bookTitle: 'The Winning Goal', childName: 'Emma', age: '5',
+    language: 'en', coverUrl: cover, generationId: 'k3x9p2m7q1', photoKey: ''
+  });
+  const t = parseShareTarget(url, OPTS);
+  assert.equal(t.url, GOOD.replace('b=the-winning-goal&', ''), 'same payload keys, empty ones left out');
+  assert.equal(t.generationId, 'k3x9p2m7q1');
+  assert.equal(t.previewUrl, cover);
+});
+
+test('a generation id that is not one is dropped', () => {
+  const t = parseShareTarget(STORE + '/pages/create-your-book?s=' + payload({ n: 'Emma', g: '../x' }), OPTS);
+  assert.equal(t.generationId, '');
 });

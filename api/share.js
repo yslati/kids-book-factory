@@ -3,19 +3,18 @@
 //
 // POST /            Body: { url } → { id, short_url }
 //   url is the preview page URL the theme's share card builds (kb-my-book.js).
-//   The same URL always gets the same link back while it lives.
+//   The same URL always gets the same link back while it lives, and a
+//   cover's first request gets the link minted with it (lib/share-store.js).
 // GET  /<id>        → 302 to the stored preview page, tagged utm_source=share
-//   so the visit counts as one from a share. Link-preview bots get a small
+//   so the visit counts as one from a share. With ?team=1 (the copy in
+//   #previews and the sheet) it is neither tagged nor counted. Link-preview bots get a small
 //   page with the child's cover and name as OG tags instead, which the
 //   storefront itself cannot render per preview. Each open is counted, added
 //   to the sheet's Shares tab and, for a link's first few, posted to #previews.
 // GET  /            → 302 to the store.
 //
-// Links live 30 days in Upstash, like the covers they point at:
-//   kbf:share:<id>              → { url, childName, coverUrl }
-//   kbf:share-url:<sha256(url)> → <id>
+// Links live 30 days in Upstash, like the covers they point at (lib/share-store.js).
 
-import { createHash } from 'node:crypto';
 import { isbot } from 'isbot';
 import { waitUntil } from '@vercel/functions';
 import { allowedOrigins, applyCors, isOriginAllowed } from '../lib/cors.js';
@@ -26,14 +25,15 @@ import { checkRateLimit } from '../lib/ratelimit.js';
 import { getRedis } from '../lib/redis.js';
 import { withReporting } from '../lib/report.js';
 import {
-  SHARE_TTL_SECONDS, isShareSlug, newShareSlug, parseShareTarget, renderExpiredPage, renderSharePage
+  SHARE_TTL_SECONDS, isShareSlug, parseShareTarget, renderExpiredPage, renderSharePage
 } from '../lib/share-link.js';
+import { claimPreviewLink, linkKey, parseRow, shareBase, storeNewLink, TEAM_PARAM, urlKey } from '../lib/share-store.js';
 import { appendRows, shareRow, TABS } from '../lib/sheet.js';
 import { storeOrigin } from '../lib/store-links.js';
 import { resolveAudience } from '../lib/audience.js';
 import { recordBotVisit } from '../lib/bot-feed.js';
 
-const SHARE_BASE = (process.env.SHARE_BASE_URL || '').replace(/\/+$/, '');
+const SHARE_BASE = shareBase();
 const COVER_BASE = process.env.R2_PUBLIC_BASE_URL || '';
 // #previews cards per link; later opens are only counted.
 const OPEN_POSTS = 5;
@@ -51,10 +51,6 @@ export default async function handler(req, res) {
 
 function storeUrl() {
   return storeOrigin() || '/';
-}
-
-function linkKey(id) {
-  return 'kbf:share:' + id;
 }
 
 function opensKey(id) {
@@ -100,10 +96,6 @@ async function recordUnfurl(req, redis, id) {
   }
 }
 
-function urlKey(url) {
-  return 'kbf:share-url:' + createHash('sha256').update(url).digest('hex').slice(0, 32);
-}
-
 async function create(req, res) {
   if (!isOriginAllowed(req)) return res.status(403).json({ error: 'forbidden-origin' });
   const redis = getRedis();
@@ -123,14 +115,7 @@ async function create(req, res) {
     const byUrl = urlKey(target.url);
     let id = await redis.get(byUrl);
     if (!isShareSlug(id)) {
-      id = null;
-      // A clash is a one-in-a-billion event for the same name; retry rather than overwrite.
-      for (let attempt = 0; attempt < 3 && !id; attempt++) {
-        const candidate = newShareSlug(target.childName);
-        const stored = await redis.set(linkKey(candidate), JSON.stringify(target), { nx: true, ex: SHARE_TTL_SECONDS });
-        if (stored) id = candidate;
-      }
-      if (!id) throw new Error('no free share id after 3 attempts');
+      id = (await claimPreviewLink(redis, target)) || (await storeNewLink(redis, target));
       await redis.set(byUrl, id, { ex: SHARE_TTL_SECONDS });
     }
     return res.status(200).json({ id, short_url: SHARE_BASE + '/' + id });
@@ -158,8 +143,7 @@ async function open(req, res) {
   let entry = null;
   try {
     const row = redis ? await redis.get(linkKey(id)) : null;
-    // Upstash may hand back an already-parsed object or a JSON string.
-    entry = typeof row === 'string' ? JSON.parse(row) : row;
+    entry = parseRow(row);
   } catch (e) {
     console.error('[share] lookup failed:', (e && e.message) || e);
     return sendHtml(res, renderExpiredPage({ storeUrl: storeUrl(), status: 503 }));
@@ -170,6 +154,7 @@ async function open(req, res) {
   if (!target) return sendHtml(res, renderExpiredPage({ storeUrl: storeUrl() }));
 
   if (!isbot(req.headers['user-agent'] || '')) {
+    if (req.query && req.query[TEAM_PARAM] === '1') return res.redirect(302, target.url);
     waitUntil(recordOpen(req, id, target));
     return res.redirect(302, sharedVisitUrl(target.url));
   }

@@ -84,6 +84,19 @@ test('a person opening a shared link lands tagged as a share, and the open is co
   assert.equal(calls.discord[0].fields.find((f) => f.name === 'Opens').value, '1st open of this link');
 });
 
+test('the team opening its copy of a link lands untagged and uncounted', async (t) => {
+  const calls = stub(t);
+  const res = response();
+  const req = request('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15');
+  req.query.team = '1';
+  await handler(req, res);
+  await settle();
+  assert.equal(res.statusCode, 302);
+  assert.equal(res.location, TARGET);
+  assert.equal(calls.redis.some(([cmd]) => cmd === 'incr' || cmd === 'hincrby'), false);
+  assert.equal(calls.discord.length, 0);
+});
+
 test('a chat app fetching the link counts as a chat preview and posts to the crawler stream, not #previews', async (t) => {
   const calls = stub(t);
   const res = response();

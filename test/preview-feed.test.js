@@ -134,6 +134,15 @@ test('a failure follows up with the error and no cover', async (t) => {
   assert.equal(fieldsOf(failed).Model, undefined);
 });
 
+test('a cover shows its share link', async (t) => {
+  withWebhook(t, WEBHOOK);
+  const calls = stubDiscord(t);
+  await announcePreview(req, preview()).done({ coverUrl: COVER, stored: 'r2', shareUrl: 'https://s.booktokids.com/emma-x7k2pq' });
+  const cover = posts(calls)[1];
+  assert.equal(fieldsOf(cover)['Share link'], 'https://s.booktokids.com/emma-x7k2pq');
+  assert.deepEqual(cover.fields.map((f) => f.name), ['Time', 'Share link', 'Generation', 'Stored']);
+});
+
 test('a cover kept on the provider URL is flagged', async (t) => {
   withWebhook(t, WEBHOOK);
   const calls = stubDiscord(t);
