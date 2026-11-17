@@ -3,7 +3,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
+import { problemText,
   appendRows, chatRow, customRow, dailyRow, previewFollowUp, previewRow, sheetConfigured, storefrontRows, TABS, updateRow, weeklyRow
 } from '../lib/sheet.js';
 import { resetDiscordThrottle, setDiscordOutbox } from '../lib/discord.js';
@@ -302,9 +302,11 @@ test('a cover rating becomes a sheet field', () => {
 });
 
 test('a free fix row names the cover it fixes and the problem', () => {
-  const row = previewRow(req, book({ fix: { of: 'a1b2c3d4e5', reason: 'head', note: '' } }), { coverUrl: COVER, bookTitle: 'The Winning Goal', attempt: ATTEMPT, prompt: 'FIX...' });
+  const row = previewRow(req, book({ fix: { of: 'a1b2c3d4e5', problem: problemText(['head', 'glasses'], 'smaller please') } }), { coverUrl: COVER, bookTitle: 'The Winning Goal', attempt: ATTEMPT, prompt: 'FIX...' });
   assert.equal(row['Fix of'], 'a1b2c3d4e5');
-  assert.equal(row['Reported problem'], 'Head or face looks off');
+  assert.equal(row['Reported problem'], 'Head is too big + Glasses are missing or wrong: smaller please');
+  assert.equal(problemText('name', ''), 'Name is wrong');
+  assert.equal(problemText(['nope'], '', [{ label: 'Missing freckles' }]), 'Missing freckles');
   assert.equal(previewRow(req, book(), { coverUrl: COVER }).hasOwnProperty('Fix of'), false);
 });
 

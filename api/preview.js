@@ -1,27 +1,34 @@
 // POST /api/preview  (synchronous, resilient)
 // Generates the personalised cover and returns its permanent URL.
 //
-// Body: { theme_id, photo_key, generation_id, child_name, age, language, turnstile_token?,
-//         customer_id?, token_date?, customer_token? }
-// → { preview_url, generation_id, status: 'ready', remaining }
+// Body: { theme_id, photo_key, generation_id, child_name, age, language, locale?,
+//         turnstile_token?, customer_id?, token_date?, customer_token? }
+// → { preview_url, generation_id, status: 'ready', remaining, fix_options }
+//   fix_options: [{ id, label?, spotted }], the fix buttons for this cover
+//   (lib/fix-options.js)
 // → { generation_id, status: 'queued', remaining, queue_position? } when the
 //   Higgsfield job is still running at the budget, or still waiting for a
 //   slot after a few seconds (queue_position is then its place in line);
 //   GET /preview-status/<id> then finishes it (lib/queued-preview.js)
 // 429 → { error: 'rate-limited', login_required, remaining: 0 }
-// 422 → { error: 'face-not-clear', reason } when the face is covered, turned
-//   away or missing (lib/face-check.js); that costs no generation
+// 422 → { error: 'face-not-clear', reason, tip } when the face is covered,
+//   turned away, blurred, dark, too small, one of several or missing
+//   (lib/face-check.js); tip says what is wrong in the page's language. That
+//   costs no generation
 //
 // A free fix of a cover the parent reported (preview page, once per cover).
 // It counts as a generation like a preview, and is made at high quality.
 // Everything but the problem comes from that cover's record
 // (lib/preview-record.js), not from the browser:
-//   { fix_of: generation_id, fix_reason, fix_note?, fix_name?, fix_rating?,
-//     fix_id?, customer_id?, token_date?, customer_token? }
+//   { fix_of: generation_id, fix_reasons: [id], fix_note?, fix_name?, fix_rating?,
+//     fix_id?, locale?, customer_id?, token_date?, customer_token? }
+// fix_reasons holds ids from fix_options. Small corrections (glasses,
+// headwear, hair, skin, name) are made on the finished cover; the others
+// paint the cover again.
 // fix_id is the id the page wants for the fixed cover (10-64 letters and
 // digits), so it can recover the cover from /preview-status if the answer
 // is lost.
-// fix_name, with fix_reason 'name', is the name the cover should read.
+// fix_name, with the reason 'name', is the name the cover should read.
 //   → { preview_url, generation_id, status: 'ready' }
 //   404 fix-unavailable (no record, e.g. an older cover), 409 fix-used,
 //   429 rate-limited as above
@@ -62,9 +69,13 @@ import { chargeGeneration, checkRateLimit, clientIp } from '../lib/ratelimit.js'
 import { r2Configured } from '../lib/r2.js';
 import { resolveBook, shopifyConfigured } from '../lib/shopify.js';
 import { abandonPendingCover, generateCover, generationConfigured } from '../lib/generate.js';
-import { FIX_REASONS, MAX_FIX_NOTE_CHARS, MAX_PROMPT_CHARS, buildPreviewPrompt, withFaceDescription, withFix } from '../lib/prompt.js';
-import { prepareChildPhoto } from '../lib/child-photo.js';
-import { checkFace, faceCheckError } from '../lib/face-check.js';
+import {
+  FixReason, MAX_FIX_NOTE_CHARS, MAX_PROMPT_CHARS, buildPreviewPrompt, isTouchUp, knownReasons, touchUpPrompt,
+  withFaceDescription, withFix, withPhotoTraits
+} from '../lib/prompt.js';
+import { faceTooSmall, prepareChildPhoto } from '../lib/child-photo.js';
+import { NO_TRAITS, checkFace, faceCheckError, reviewCover } from '../lib/face-check.js';
+import { pickedNotes } from '../lib/fix-options.js';
 import { resolveBookLanguage } from '../lib/book-languages.js';
 import { verifyCustomerToken } from '../lib/customer-token.js';
 import { tagCustomerPreviewLimit } from '../lib/customer-tag.js';
@@ -86,6 +97,10 @@ import { waitUntil } from '@vercel/functions';
 // OpenAI keeps its turn even when slow), leaving time to copy the cover to
 // R2 and respond before the storefront stops waiting (90s).
 const GENERATION_BUDGET_MS = 75000;
+// The most problems one fix can name.
+const MAX_FIX_REASONS = 8;
+// Room kept for the corrections when the photo rules join a short prompt.
+const FIX_ROOM_CHARS = 700;
 
 export default withReporting(handler);
 
@@ -176,6 +191,7 @@ async function handler(req, res) {
   const childName = String(body.child_name || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 40);
   const ageNum = parseInt(body.age, 10);
   const ageText = Number.isFinite(ageNum) && ageNum >= 0 && ageNum <= 18 ? String(ageNum) : '';
+  const locale = localeOf(body);
 
   if (!themeId || !photoKey || !generationId) {
     return res.status(400).json({ error: 'missing-fields' });
@@ -205,9 +221,15 @@ async function handler(req, res) {
   // The allowance is charged in runPreview, once the photo has passed the
   // face check, so a refused photo costs the parent nothing.
   return runPreview(req, res, {
-    themeId, photoKey, generationId, childName, ageText, language,
+    themeId, photoKey, generationId, childName, ageText, language, locale,
     customer: verifyCustomerToken(body), startedAt
   });
+}
+
+// The page's language ("fr", "pt-PT"), for the texts written for the parent.
+function localeOf(body) {
+  const locale = String(body.locale || '');
+  return /^[A-Za-z]{2}(-[A-Za-z]{2})?$/.test(locale) ? locale : 'en';
 }
 
 // The 429 for a parent who has used up their generations. `login_required`
@@ -228,12 +250,13 @@ async function refuseOverLimit(res, customer) {
 // doesn't count against the free previews: each fix needs a cover that did.
 async function fixPreview(req, res, body, startedAt) {
   const fixOf = String(body.fix_of || '').trim();
-  const reason = String(body.fix_reason || '');
+  // fix_reasons is a list; fix_reason the single one older pages send.
+  const asked = (Array.isArray(body.fix_reasons) ? body.fix_reasons : [body.fix_reason]).slice(0, MAX_FIX_REASONS);
+  const reasons = knownReasons(asked);
   const note = String(body.fix_note || '').replace(/\s+/g, ' ').trim().slice(0, MAX_FIX_NOTE_CHARS);
   const rating = [1, 2, 3, 4, 5].includes(body.fix_rating) ? body.fix_rating : 0;
-  const fixName = reason === 'name' ? String(body.fix_name || '').replace(/\s+/g, ' ').trim().slice(0, 40) : '';
+  const fixName = reasons.includes(FixReason.NAME) ? String(body.fix_name || '').replace(/\s+/g, ' ').trim().slice(0, 40) : '';
   if (!/^[A-Za-z0-9-]{1,64}$/.test(fixOf)) return res.status(400).json({ error: 'bad-generation-id' });
-  if (!Object.prototype.hasOwnProperty.call(FIX_REASONS, reason)) return res.status(400).json({ error: 'bad-reason' });
 
   const redis = getRedis();
   if (!redis) return res.status(503).json({ error: 'fix-unavailable' });
@@ -242,12 +265,18 @@ async function fixPreview(req, res, body, startedAt) {
   if (!record || !record.photoKey || !record.themeId || !language) {
     return res.status(404).json({ error: 'fix-unavailable' });
   }
+  // The cover review's own notes are named by id; their texts stay on the record.
+  const extra = pickedNotes(asked, record.notes);
+  if (!reasons.length && !extra.length) return res.status(400).json({ error: 'bad-reason' });
   // A fix's own cover can't be fixed again.
   if (record.fixOf || !(await claimFix(redis, fixOf))) return res.status(409).json({ error: 'fix-used' });
 
   // The corrected name goes in the problem too, so the sheet and #previews show it.
-  const problemNote = fixName ? 'should be "' + fixName + '"' : note;
-  waitUntil(updateRow(TABS.previews, fixOf, { 'Reported problem': problemText(reason, problemNote) }));
+  const problem = problemText(reasons, [fixName ? 'should be "' + fixName + '"' : '', note].filter(Boolean).join(' · '), extra);
+  waitUntil(updateRow(TABS.previews, fixOf, { 'Reported problem': problem }));
+  const fix = { of: fixOf, reasons, extra, note, problem, rating, link: record.link || '', traits: record.traits || null };
+  // Small corrections are made on the finished cover; the rest paint it again.
+  if (isTouchUp(fix) && /^https:\/\//.test(record.coverUrl || '')) fix.touchUpOf = record.coverUrl;
   // The page picks the fixed cover's id, so it can ask /preview-status for
   // the cover if this answer is lost; an id already in use gets a fresh one.
   const wantedId = String(body.fix_id || '');
@@ -261,9 +290,10 @@ async function fixPreview(req, res, body, startedAt) {
     childName: fixName || record.childName || '',
     ageText: record.age || '',
     language,
+    locale: localeOf(body),
     customer: verifyCustomerToken(body),
     startedAt,
-    fix: { of: fixOf, reason, note: problemNote, rating, link: record.link || '' }
+    fix
   });
   if (!ok) {
     try { await releaseFix(redis, fixOf); } catch (e) { /* the parent just can't retry */ }
@@ -273,7 +303,7 @@ async function fixPreview(req, res, body, startedAt) {
 // Generates, stores and records one cover, then answers the request.
 // Resolves to true when the cover is ready or queued.
 async function runPreview(req, res, p) {
-  const { themeId, photoKey, generationId, childName, ageText, language, customer, startedAt, fix } = p;
+  const { themeId, photoKey, generationId, childName, ageText, language, locale, customer, startedAt, fix } = p;
 
   // 2. The cover and prompt come from the product's own metafields while the
   //    photo is cropped to the face (and shrunk if full-size). A covered or
@@ -283,8 +313,12 @@ async function runPreview(req, res, p) {
   const bookLoad = resolveBook(themeId);
   bookLoad.catch(() => { /* awaited below */ });
   const photo = await prepareChildPhoto(photoKey);
-  const face = photo.image ? await checkFace(photo.image, { detailed: Boolean(fix) }) : null;
-  const refused = fix ? null : faceCheckError(face);
+  const face = photo.image ? await checkFace(photo.image, { detailed: Boolean(fix), locale }) : null;
+  const refused = fix ? null : faceCheckError(face, { tooSmall: faceTooSmall(photo) });
+  // What the photo shows; a fix falls back on what its first cover's check read.
+  const read = face && face.traits.description ? face.traits : null;
+  const traits = read || (fix && fix.traits) || (face && face.traits) || NO_TRAITS;
+  p.traits = { ...traits, description: '' };
   if (!refused) {
     const allowed = await chargeGeneration(req, customer);
     if (!allowed.success) {
@@ -309,32 +343,42 @@ async function runPreview(req, res, p) {
     book = await bookLoad;
     const childUrl = photo.url;
     const order = { language, childName, age: ageText };
+    // A parent who asked for the headwear off must not get the rule that keeps it on.
+    const kept = fix && fix.reasons.includes(FixReason.HEADWEAR_REMOVE) ? { ...traits, headwear: '', hairHidden: false } : traits;
     const base = buildPreviewPrompt(book.prompt, order);
-    const long = withFaceDescription(buildPreviewPrompt(book.openaiPrompt || book.prompt, order), face && face.description);
+    const short = withPhotoTraits(base, kept);
+    const long = withPhotoTraits(withFaceDescription(buildPreviewPrompt(book.openaiPrompt || book.prompt, order), traits.description), kept);
+    const ctx = { name: childName, traits };
+    const touchUpOf = fix && fix.touchUpOf;
     // Sized for each provider's own prompt limit (lib/generate.js): OpenAI's
-    // longer prompt with the face description where there is room for it,
-    // the fix line cut to fit.
+    // longer prompt with the face description, the short one with the photo
+    // rules where they fit, the corrections cut to fit.
     const promptFor = (maxChars) => {
-      const text = maxChars > MAX_PROMPT_CHARS ? long : base;
-      return fix ? withFix(text, fix, childName, { maxChars }) : text;
+      if (touchUpOf) return touchUpPrompt(fix, ctx, { maxChars });
+      const text = maxChars > MAX_PROMPT_CHARS ? long : (short.length + (fix ? FIX_ROOM_CHARS : 0) <= maxChars ? short : base);
+      return fix ? withFix(text, fix, ctx, { maxChars }) : text;
     };
     prompt = promptFor(Infinity);
 
     // 3. Generate, falling back down the model chain on failure. Only the
     //    product page polls for a queued cover, and only with Redis to hold it.
-    const generated = await generateCover(book.coverUrl, childUrl, promptFor, {
+    const generated = await generateCover(touchUpOf || book.coverUrl, childUrl, promptFor, {
       coverAspect: book.coverAspect,
       deadline: startedAt + GENERATION_BUDGET_MS,
       keepPending: !fix && Boolean(getRedis())
     });
 
     // 4. Persist and record it, with the prompt the cover was made from.
+    //    A first cover is also compared with the photo while it is stored,
+    //    which fills the page's fix buttons.
     prompt = generated.prompt;
-    const previewUrl = await finishPreview(req, p, { book, generated, prompt, feed });
+    const review = fix ? null : reviewCover(photo.image, generated.url, { traits, locale });
+    const done = await finishPreview(req, p, { book, generated, prompt, feed, review });
     res.status(200).json({
-      preview_url: previewUrl,
+      preview_url: done.url,
       generation_id: generationId,
       status: 'ready',
+      fix_options: done.fixOptions,
       // The tighter of the two windows - that's the number that will actually
       // stop them. null when rate limiting is disabled (theme hides the counter).
       remaining: p.remaining
@@ -360,7 +404,7 @@ async function runPreview(req, res, p) {
     const detail = String((err && err.message) || err) + (err && err.reason ? ': ' + err.reason : '');
     failPreview(req, p, { error: detail, prompt, feed });
     if (code === 'face-not-clear') {
-      res.status(422).json({ error: code, status: 'failed', reason: err.reason, remaining: p.remaining });
+      res.status(422).json({ error: code, status: 'failed', reason: err.reason, tip: err.tip || '', remaining: p.remaining });
     } else if (code === 'product-not-found' || code === 'prompt-missing' || code === 'cover-missing') {
       res.status(422).json({ error: code, status: 'failed', detail });
     } else {
