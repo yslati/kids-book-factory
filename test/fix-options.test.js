@@ -11,9 +11,9 @@ const FINE = { glasses: Seen.MATCH, headwear: Seen.MATCH, hair: Seen.MATCH, skin
 const ids = (options) => options.map((o) => o.id);
 
 test('without a review the standard buttons show, plus what the photo has', () => {
-  assert.deepEqual(ids(fixOptions(null, null)), ['likeness', 'head', 'style', 'hair', 'skin', 'name', 'other']);
+  assert.deepEqual(ids(fixOptions(null, null)), ['likeness', 'style', 'hair', 'skin', 'name', 'other']);
   const options = fixOptions(CHEF, null, { childName: 'Nolan' });
-  assert.deepEqual(ids(options), ['likeness', 'head', 'style', 'glasses', 'headwear_add', 'hair', 'skin', 'name', 'other']);
+  assert.deepEqual(ids(options), ['likeness', 'style', 'glasses', 'headwear_add', 'hair', 'skin', 'name', 'other']);
   assert.ok(options.every((o) => !o.spotted));
   assert.equal(options.find((o) => o.id === 'headwear_add').label, 'chef hat');
 });
@@ -21,10 +21,11 @@ test('without a review the standard buttons show, plus what the photo has', () =
 test('what the review spotted comes first', () => {
   const review = { ...FINE, glasses: Seen.MISSING, headwear: Seen.MISSING, hair: Seen.DIFFERENT, headTooBig: true, notes: [{ label: 'Missing freckles', fix: 'Add the freckles.' }] };
   const options = fixOptions(CHEF, review, { childName: 'Nolan' });
-  assert.deepEqual(ids(options), ['head', 'glasses', 'headwear_add', 'hair', 'note_0', 'likeness', 'style', 'skin', 'name', 'other']);
-  assert.deepEqual(options.filter((o) => o.spotted).map((o) => o.id), ['head', 'glasses', 'headwear_add', 'hair', 'note_0']);
+  assert.deepEqual(ids(options), ['glasses', 'headwear_add', 'hair', 'note_0', 'likeness', 'style', 'skin', 'name', 'other']);
+  assert.deepEqual(options.filter((o) => o.spotted).map((o) => o.id), ['glasses', 'headwear_add', 'hair', 'note_0']);
   assert.equal(options.find((o) => o.id === 'note_0').label, 'Missing freckles');
-  assert.equal(reviewSummary(options), 'head, glasses, chef hat, hair, Missing freckles');
+  assert.equal(reviewSummary(options), 'glasses, chef hat, hair, Missing freckles');
+  assert.equal(reviewSummary(options, review), 'head too big, glasses, chef hat, hair, Missing freckles');
 });
 
 test('headwear already on the cover can be taken off instead', () => {

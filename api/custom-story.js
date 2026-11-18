@@ -108,7 +108,7 @@ async function generate(req, res, body, startedAt) {
     return res.status(403).json({ error: 'challenge-failed' });
   }
 
-  // The photo is cropped and its face checked first, so a refused photo
+  // The photo is prepared and its face checked first, so a refused photo
   // costs no generation. Then the custom story's own daily allowance (2), so
   // trying an idea doesn't use up the product previews, plus the per-IP
   // backstop shared with /preview, which caps what one machine can spend on

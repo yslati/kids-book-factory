@@ -86,7 +86,8 @@ test('appends the language, the name with its no-leftover-letters rule, and the 
     childName: 'James',
     age: '7'
   });
-  assert.ok(prompt.startsWith('BASE\n\n'));
+  assert.ok(prompt.startsWith('HEAD SIZE (hard rule) - '));
+  assert.match(prompt, /\n\nBASE\n\n/);
   assert.match(prompt, /Book language: French \(fr\)\./);
   assert.match(prompt, /the child's first name is "James"/);
   assert.match(prompt, /Replace every one of them with "James"/);
@@ -215,9 +216,9 @@ test('the OpenAI prompt carries pose, identity, head and name-safe sections', ()
 test('the age sets the face, never the hero\'s body or head size', () => {
   const prompt = buildPreviewPrompt('BASE', { language: resolveBookLanguage('en'), childName: '', age: '3' });
   assert.match(prompt, /The child is 3 years old\. Paint a face of that age from the photo's features/);
-  assert.match(prompt, /Head size: the child's head, hair included, is no bigger than the hero's and fits the body\./);
+  assert.match(prompt, /^HEAD SIZE \(hard rule\) - .*inside the original hero's head outline, narrower than the shoulders/);
   // The head rule goes in even without an age.
-  assert.match(buildPreviewPrompt('BASE', { language: resolveBookLanguage('en'), childName: '', age: '' }), /Head size:/);
+  assert.match(buildPreviewPrompt('BASE', { language: resolveBookLanguage('en'), childName: '', age: '' }), /^HEAD SIZE \(hard rule\)/);
 });
 
 test('only the hero\'s name is personalised; team names and numbers stay', () => {
