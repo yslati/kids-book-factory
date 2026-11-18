@@ -17,6 +17,7 @@ import { appendRows, storefrontRows } from '../lib/sheet.js';
 import { orderFromWebhook, validSignature } from '../lib/shopify-order.js';
 import { trafficSource } from '../lib/traffic-source.js';
 import { rawBody } from '../lib/raw-body.js';
+import { Step, addStep, linkOrder } from '../lib/visitor-log.js';
 
 // The signature covers the exact bytes Shopify sent (lib/raw-body.js).
 export const config = { api: { bodyParser: false } };
@@ -32,6 +33,13 @@ async function record(order, requestId) {
     if (counted === false) return;
     const journey = await readJourney(redis, order.id);
     const visitor = { ...order.visitor, requestId, id: (journey && journey.visitorId) || '' };
+    if (visitor.id) {
+      const { orderId, total } = event.checkout;
+      await Promise.all([
+        linkOrder(redis, visitor.id, [orderId, order.id]),
+        addStep(redis, visitor.id, { kind: Step.order, text: orderId + (total ? ' · ' + total.amount + ' ' + total.currency : '') })
+      ]);
+    }
     const recorded = { visit: null, source, journey };
     const sheet = storefrontRows(event, recorded, visitor);
     await Promise.all([

@@ -66,7 +66,8 @@ function timelineStep(event) {
     case 'search_submitted': return event.search ? { kind: Step.search, text: '"' + event.search.query + '" · ' + event.search.results + ' results' } : null;
     case 'product_added_to_cart': return event.product ? { kind: Step.cart, text: [event.product.title, event.product.variant].filter(Boolean).join(' · ') } : null;
     case 'checkout_started': return { kind: Step.checkout, text: event.checkout ? money(event.checkout.total) : '' };
-    case 'checkout_completed': return { kind: Step.order, text: event.checkout ? money(event.checkout.total) : '' };
+    // With the order webhook on, it logs the order with its name (api/shopify-webhook.js).
+    case 'checkout_completed': return orderWebhookOn() ? null : { kind: Step.order, text: event.checkout ? money(event.checkout.total) : '' };
     default: return null;
   }
 }
@@ -83,7 +84,8 @@ async function record(event, visitor) {
     }
     // A person's browser that merely looks automated to the beacon.
     if (event.name === 'crawler_seen') return;
-    visitor.id = visitorId({ key: event.consented ? event.clientId : '', ip: visitor.ip, userAgent: visitor.userAgent });
+    visitor.key = event.consented ? event.clientId : '';
+    visitor.id = visitorId({ key: visitor.key, ip: visitor.ip, userAgent: visitor.userAgent });
     const step = timelineStep(event);
     if (step) await logStep(redis, visitor, step);
     if (!event.consented) event.clientId = await cookielessId(redis, visitor);
