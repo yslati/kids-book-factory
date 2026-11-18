@@ -14,6 +14,7 @@ function fakeRedis() {
   const strings = new Map();
   const lists = new Map();
   const hashes = new Map();
+  const sets = new Map();
   const ops = {
     set(k, v) { strings.set(k, v); return 'OK'; },
     get(k) { return strings.has(k) ? strings.get(k) : null; },
@@ -23,7 +24,10 @@ function fakeRedis() {
     expire() { return 1; },
     hset(k, o) { hashes.set(k, { ...(hashes.get(k) || {}), ...o }); return 1; },
     hsetnx(k, f, v) { const h = hashes.get(k) || {}; if (f in h) return 0; h[f] = v; hashes.set(k, h); return 1; },
-    hgetall(k) { return hashes.get(k) || null; }
+    hgetall(k) { return hashes.get(k) || null; },
+    hget(k, f) { const h = hashes.get(k); return h && f in h ? h[f] : null; },
+    sadd(k, v) { const set = sets.get(k) || new Set(); set.add(v); sets.set(k, set); return 1; },
+    smembers(k) { return [...(sets.get(k) || [])]; }
   };
   return {
     ...ops,
@@ -251,4 +255,33 @@ test('today and balance answer with their cards', async () => {
   assert.match(card.fields[1].value, /No balance API/);
   assert.match(card.fields[2].value, /No balance API/);
   assert.match(balanceEmbed({ fal: null }).fields[0].value, /Could not read it/);
+});
+
+test('a verified customer joins the timeline once and finds the visitor by admin link', async () => {
+  process.env.SHOPIFY_SHOP = 'eytisc-0a.myshopify.com';
+  const { linkCustomer } = await import('../lib/visitor-log.js');
+  const { redis, v } = await seeded();
+  const phone = { ...visitor, id: visitorId({ key: 'aaaaaaaa-59e3-49b8-bf4d-1455476a5264' }), userAgent: 'Android' };
+  await logStep(redis, phone, { kind: Step.page, text: '/' });
+  await linkCustomer(redis, v.id, '31427367502074', 'signed in');
+  await linkCustomer(redis, v.id, '31427367502074', 'signed in');
+  await linkCustomer(redis, phone.id, '31427367502074', 'ordered');
+  await linkCustomer(redis, v.id, 'not-a-number', 'signed in');
+
+  const steps = (await readTimeline(redis, v.id)).steps.filter((st) => st.kind === Step.account);
+  assert.deepEqual(steps.map((st) => st.text), ['signed in · customer 31427367502074']);
+
+  // The phone was seen last, so the admin link opens its timeline, naming the other device.
+  await redis.hset('kbf:who:' + phone.id + ':info', { last: Date.now() + 1000 });
+  const deps = { redis, giftedPreviews: async () => 0 };
+  const find = (value) => run({ name: 'btk', options: [{ name: 'customer', options: [{ name: 'id', value }] }] }, deps);
+  const byLink = (await find('https://admin.shopify.com/store/eytisc-0a/customers/31427367502074')).embeds[0];
+  assert.equal(byLink.title, '👤 Visitor ' + phone.id);
+  const field = (name) => (byLink.fields.find((f) => f.name === name) || {}).value;
+  assert.equal(field('Shopify customer'), '[31427367502074](https://admin.shopify.com/store/eytisc-0a/customers/31427367502074)');
+  assert.equal(field('Same customer'), '`' + v.id + '`');
+  assert.match(field('Found from'), /customer 31427367502074/);
+  assert.equal((await find('customer 31427367502074')).embeds[0].title, '👤 Visitor ' + phone.id);
+  assert.equal((await find('31427367502074')).embeds[0].title, '👤 Visitor ' + phone.id);
+  assert.match((await find('https://admin.shopify.com/store/eytisc-0a/customers/999')).content, /No visitor found/);
 });

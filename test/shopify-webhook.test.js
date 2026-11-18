@@ -19,7 +19,7 @@ const ORDER = {
   email: 'parent@example.com',
   landing_site: '/products/the-ice-hockey-comeback?utm_source=google&utm_medium=product_sync&name=Emma',
   referring_site: 'https://www.google.com/search?q=hockey+book',
-  customer: { first_name: 'Ann', email: 'parent@example.com', orders_count: 1 },
+  customer: { id: 31427367502074, first_name: 'Ann', email: 'parent@example.com', orders_count: 1 },
   shipping_address: { first_name: 'Ann', address1: '1 Rue X', city: 'Lyon', country_code: 'fr' },
   client_details: { browser_ip: '203.0.113.7', user_agent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Mobile Safari/537.36' },
   discount_codes: [{ code: 'WELCOME10', amount: '5.00', type: 'percentage' }],
@@ -53,6 +53,7 @@ test('an order keeps books, prices, codes, campaign tags, country and browser; n
   assert.equal(order.visitor.country, 'FR');
   assert.equal(order.visitor.city, '');
   assert.equal(order.visitor.ip, '');
+  assert.equal(order.customerId, '31427367502074');
   assert.ok(!/Emma|Ann|parent@|Lyon|Rue|203\.0\.113/.test(JSON.stringify(order)));
 });
 
@@ -60,6 +61,7 @@ test('an order without a landing page, customer or address still works', () => {
   const order = orderFromWebhook({ id: 1, name: '#btk-1', currency: 'USD', total_price: '0.00', line_items: [] });
   assert.equal(order.event.path, '/');
   assert.equal(order.event.checkout.firstOrder, null);
+  assert.equal(order.customerId, '');
   assert.equal(order.visitor.country, '');
   assert.equal(orderFromWebhook(null), null);
   assert.equal(orderFromWebhook({ name: 'no id' }), null);

@@ -11,11 +11,37 @@
 // customer can never read another's list.
 //
 // GET takes the token as query params, since a GET has no body.
+//
+// A POST is the moment previews made before signing in join the account, so
+// this visitor and the visitors those covers were made by are linked to the
+// customer (lib/visitor-log.js linkCustomer).
 
 import { applyCors, isOriginAllowed } from '../../lib/cors.js';
 import { verifyCustomerToken, customerTokensEnabled } from '../../lib/customer-token.js';
 import { listPreviews, savePreviews, userPreviewsEnabled } from '../../lib/user-previews.js';
 import { withReporting } from '../../lib/report.js';
+import { waitUntil } from '@vercel/functions';
+import { getRedis } from '../../lib/redis.js';
+import { visitorOf } from '../../lib/discord.js';
+import { linkCustomer, visitorOfGeneration } from '../../lib/visitor-log.js';
+
+// At most this many posted covers are traced back to their visitors.
+const MAX_LINKED = 20;
+
+// The theme stores a cover as "kb-book-<generation id>" or the bare id.
+function generationOf(entry) {
+  const key = String((entry && entry.k) || '').replace(/^kb-book-/, '');
+  return /^[A-Za-z0-9-]{1,64}$/.test(key) ? key : '';
+}
+
+async function linkAccount(req, customerId, previews) {
+  const redis = getRedis();
+  if (!redis) return;
+  const generations = (Array.isArray(previews) ? previews : []).slice(0, MAX_LINKED).map(generationOf).filter(Boolean);
+  const makers = await Promise.all(generations.map((g) => visitorOfGeneration(redis, g).catch(() => '')));
+  const ids = [...new Set([visitorOf(req).id, ...makers].filter(Boolean))];
+  await Promise.all(ids.map((id) => linkCustomer(redis, id, customerId, 'signed in')));
+}
 
 export default withReporting(handler);
 
@@ -51,6 +77,7 @@ async function handler(req, res) {
     if (!customer.valid) return res.status(401).json({ error: 'not-signed-in' });
 
     const saved = await savePreviews(customer.customerId, body.previews);
+    waitUntil(linkAccount(req, customer.customerId, body.previews));
     // Return the merged list so the client can adopt it wholesale rather than
     // reconciling a second time.
     const previews = await listPreviews(customer.customerId);

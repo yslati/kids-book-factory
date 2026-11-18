@@ -29,7 +29,7 @@
 
 import { waitUntil } from '@vercel/functions';
 import { visitorOf } from '../lib/discord.js';
-import { Step, logStep } from '../lib/visitor-log.js';
+import { Step, linkCustomer, logStep } from '../lib/visitor-log.js';
 import { applyCors, isOriginAllowed } from '../lib/cors.js';
 import { verifyTurnstile } from '../lib/turnstile.js';
 import { redeemPreviewPass } from '../lib/preview-pass.js';
@@ -132,6 +132,7 @@ async function generate(req, res, body, startedAt) {
 
   const visitor = visitorOf(req);
   waitUntil(logStep(getRedis(), visitor, { kind: Step.custom, text: r.world + ' · ' + r.brief, generation: r.generationId }));
+  if (customer.valid) waitUntil(linkCustomer(getRedis(), visitor.id, customer.customerId, 'signed in'));
   const photoUrl = publicUrl(r.photoKey);
   const feed = announceCustomStory(req, {
     ...r,

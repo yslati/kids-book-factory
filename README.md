@@ -119,12 +119,14 @@ Each visitor's steps (pages, searches, previews, covers, ratings, fixes, shares,
 
 In Discord, `/btk` (`lib/btk-bot.js`, `api/discord.js`) has:
 
-- `customer id:` the timeline, found by Visitor ID or generation ID, 25 steps a page (Older / Newer buttons), with buttons to gift previews (a form asks how many), reset uploads, and open the visitor's Clarity recordings (the storefront gives Clarity Shopify's visitor id as its custom user id).
+- `customer id:` the timeline, found by Visitor ID, generation ID or Shopify customer (admin link or id), 25 steps a page (Older / Newer buttons), with buttons to gift previews (a form asks how many), reset uploads, and open the visitor's Clarity recordings (the storefront gives Clarity Shopify's visitor id as its custom user id).
 - `order number:` the same, found from an order (`#btk-1234` or its id; orders are linked by the order webhook when the pixel saw the buyer).
 - `today`: the UTC day's funnel so far.
 - `gift id: count:` up to 20 extra previews for the visitor's last IP, used once every free window is spent, for 24 hours (`kbf:gift:<ip>`, `lib/ratelimit.js`).
 - `upload-reset id:` that IP's photo upload window back to full.
 - `balance`: fal's credit (from its API), with links to the OpenAI and Higgsfield billing pages, which have no balance API.
+
+A visitor is linked to a Shopify customer when they make a cover signed in, their earlier covers sync to their account (`/me/previews`), or they order (the order webhook): the card links the customer in the admin and lists the customer's other Visitor IDs, and the timeline gets an *Account* step.
 
 Gifts and resets need Administrator or Manage Server, go on the visitor's timeline and are posted to #logs. Setup: in the Discord Developer Portal, set the app's **Interactions Endpoint URL** to `https://<backend>/discord`; in Vercel, set `DISCORD_PUBLIC_KEY` (the app's public key) and `DISCORD_GUILD_ID` (our server); then register the command with `scripts/discord-commands.mjs`. Server admins only.
 

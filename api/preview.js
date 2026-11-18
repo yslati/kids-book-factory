@@ -90,7 +90,7 @@ import { queuePreview } from '../lib/queued-preview.js';
 import { attemptLabel } from '../lib/provider-order.js';
 import { countPreview } from '../lib/visitor-counts.js';
 import { countEvent } from '../lib/event-stats.js';
-import { Step, lastStep, logGenerationStep, logStep } from '../lib/visitor-log.js';
+import { Step, lastStep, linkCustomer, logGenerationStep, logStep } from '../lib/visitor-log.js';
 import { waitUntil } from '@vercel/functions';
 
 // vercel.json gives this function 90s. Generation must finish within 75s of
@@ -336,9 +336,11 @@ async function runPreview(req, res, p) {
     p.remaining = allowed.remaining;
   }
   // Awaited, so this cover's later steps find whose it is.
-  await logStep(getRedis(), visitorOf(req), {
+  const visitor = visitorOf(req);
+  await logStep(getRedis(), visitor, {
     kind: fix ? Step.fix : Step.preview, text: fix ? fix.problem : themeId, generation: generationId
   });
+  if (customer.valid) waitUntil(linkCustomer(getRedis(), visitor.id, customer.customerId, 'signed in'));
 
   // Counted as generation starts, whether or not it succeeds.
   const counts = countPreview(getRedis(), req, customer.valid ? customer.customerId : null);
