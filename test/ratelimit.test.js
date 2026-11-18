@@ -82,3 +82,30 @@ test('minRemaining compares only real numbers', () => {
   assert.equal(minRemaining(3, null), 3);
   assert.equal(minRemaining(null, null), null);
 });
+
+test('gifted previews are used only once the free ones are spent', async () => {
+  const { check } = windows();
+  let gifts = 2;
+  const takeGift = async () => (gifts > 0 ? --gifts : -1);
+  const req = { ip: '1.2.3.4' };
+  const out = [];
+  for (let i = 0; i < 7; i++) out.push(await chargeGeneration(req, guest, { check, takeGift }));
+  assert.deepEqual(out.map((r) => r.success), [true, true, true, true, true, true, false]);
+  assert.deepEqual(out.slice(4, 6).map((r) => r.remaining), [1, 0]);
+  assert.equal(gifts, 0);
+});
+
+test('a gift adds up to the cap and lasts a day', async () => {
+  const { giftPreviews, MAX_GIFT } = await import('../lib/ratelimit.js');
+  const store = new Map();
+  const ttl = new Map();
+  const redis = {
+    incrby: async (k, n) => { store.set(k, (store.get(k) || 0) + n); return store.get(k); },
+    set: async (k, v, o) => { store.set(k, v); ttl.set(k, o.ex); },
+    expire: async (k, s) => { ttl.set(k, s); }
+  };
+  assert.equal(await giftPreviews('1.2.3.4', 3, redis), 3);
+  assert.equal(ttl.get('kbf:gift:1.2.3.4'), 86400);
+  assert.equal(await giftPreviews('1.2.3.4', 30, redis), MAX_GIFT);
+  await assert.rejects(giftPreviews('unknown', 1, redis));
+});

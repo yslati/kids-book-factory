@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { parseVisitorId, visitorId } from '../lib/visitor-id.js';
 import { Step, lastStep, logGenerationStep, logStep, readTimeline } from '../lib/visitor-log.js';
-import { COMMAND, runCommand, validInteraction } from '../lib/btk-bot.js';
+import { COMMAND, clarityUrl, isAdmin, respond, validInteraction } from '../lib/btk-bot.js';
+
+const run = async (data, deps, extra = {}) => (await respond({ type: 2, data, ...extra }, deps)).data;
 
 process.env.CRON_SECRET = 'test-secret';
 
@@ -92,7 +94,7 @@ test('/btk customer shows a visitor\'s timeline, found by Visitor ID or generati
   assert.equal((await lastStep(redis, v.id, Step.cover)).url, 'https://cdn.example/c.jpg');
 
   const data = (value) => ({ name: 'btk', options: [{ type: 1, name: 'customer', options: [{ name: 'id', value }] }] });
-  const byId = await runCommand(data(v.id.toLowerCase()), { redis });
+  const byId = await run(data(v.id.toLowerCase()), { redis, giftedPreviews: async () => 0 });
   const embed = byId.embeds[0];
   assert.equal(embed.title, '👤 Visitor ' + v.id);
   const lines = embed.description.split('\n');
@@ -102,13 +104,13 @@ test('/btk customer shows a visitor\'s timeline, found by Visitor ID or generati
   assert.ok(embed.fields.some((f) => f.name === 'Totals' && f.value === '1 pages · 1 covers · 1 carts · 0 orders'));
   assert.ok(embed.fields.some((f) => f.name === 'Where' && f.value.includes(v.id)));
 
-  const byGen = await runCommand(data('gen-123'), { redis });
+  const byGen = await run(data('gen-123'), { redis, giftedPreviews: async () => 0 });
   assert.equal(byGen.embeds[0].title, '👤 Visitor ' + v.id);
   assert.ok(byGen.embeds[0].fields.some((f) => f.name === 'Found from' && f.value.includes('gen-123')));
 
-  const unknown = await runCommand(data('nope'), { redis });
+  const unknown = await run(data('nope'), { redis });
   assert.match(unknown.content, /No visitor found/);
-  assert.match((await runCommand({ name: 'btk', options: [{ name: 'other' }] }, { redis })).content, /Unknown command/);
+  assert.match((await run({ name: 'btk', options: [{ name: 'other' }] }, { redis })).content, /Unknown command/);
 });
 
 test('a visitor without an id is never logged', async () => {
@@ -148,4 +150,106 @@ test('a /btk command is answered in the response itself, not by a later edit', a
   assert.equal(sent.body.type, 4);
   assert.match(sent.body.data.content, /Redis is not configured/);
   assert.deepEqual(sent.body.data.allowed_mentions, { parse: [] });
+});
+
+const ADMIN = { member: { permissions: String(1 << 3), user: { username: 'shark' } } };
+const MEMBER = { member: { permissions: '0', user: { username: 'guest' } } };
+
+async function seeded(steps = 3) {
+  const redis = fakeRedis();
+  const v = { ...visitor, id: visitorId({ key: '2bd80319-59e3-49b8-bf4d-1455476a5264' }), key: '2bd80319-59e3-49b8-bf4d-1455476a5264' };
+  for (let i = 0; i < steps; i++) await logStep(redis, v, { kind: Step.page, text: '/p' + i });
+  return { redis, v };
+}
+
+test('only Administrator or Manage Server counts as admin', () => {
+  assert.equal(isAdmin(ADMIN), true);
+  assert.equal(isAdmin({ member: { permissions: String(1 << 5) } }), true);
+  assert.equal(isAdmin(MEMBER), false);
+  assert.equal(isAdmin({}), false);
+});
+
+test('a long timeline pages with Older and Newer buttons, and links Clarity', async () => {
+  const { redis, v } = await seeded(30);
+  const deps = { redis, giftedPreviews: async () => 0 };
+  const first = await run({ name: 'btk', options: [{ name: 'customer', options: [{ name: 'id', value: v.id }] }] }, deps);
+  const labels = first.components[0].components.map((b) => b.label);
+  assert.deepEqual(labels, ['Older steps', 'Gift previews', 'Reset uploads', 'Clarity recordings']);
+  assert.match(first.embeds[0].footer.text, /Steps 1–25 of 30/);
+  assert.equal(first.components[0].components[3].url, clarityUrl(v.key));
+  assert.match(clarityUrl(v.key), /CustomUserId=is%3B2bd80319-59e3-49b8-bf4d-1455476a5264$/);
+
+  const older = await respond({ type: 3, data: { custom_id: 'btk:page:' + v.id + ':25' }, ...MEMBER }, deps);
+  assert.equal(older.type, 7);
+  assert.match(older.data.embeds[0].footer.text, /Steps 26–30 of 30/);
+  assert.deepEqual(older.data.components[0].components.map((b) => b.label).slice(0, 1), ['Newer steps']);
+  assert.match(older.data.embeds[0].description.split('\n').pop(), /\/p4$/);
+});
+
+test('gifts need an admin, go to the visitor\'s last IP and join their timeline', async () => {
+  const { redis, v } = await seeded();
+  const given = [];
+  const deps = { redis, giftPreviews: async (ip, n) => { given.push([ip, n]); return n; }, giftedPreviews: async () => 0 };
+  const gift = (extra, count = 3) => run({ name: 'btk', options: [{ name: 'gift', options: [{ name: 'id', value: v.id }, { name: 'count', value: count }] }] }, deps, extra);
+
+  assert.match((await gift(MEMBER)).content, /Only server admins/);
+  assert.match((await gift(ADMIN, 50)).content, /from 1 to 20/);
+  assert.match((await gift(ADMIN)).content, /Gifted 3 previews/);
+  assert.deepEqual(given, [['203.0.113.9', 3]]);
+  const timeline = await readTimeline(redis, v.id);
+  assert.equal(timeline.steps[0].kind, Step.gift);
+  assert.match(timeline.steps[0].text, /3 previews by shark/);
+});
+
+test('the gift button opens a form, and its answer gifts that many', async () => {
+  const { redis, v } = await seeded();
+  const given = [];
+  const deps = { redis, giftPreviews: async (ip, n) => { given.push(n); return n; } };
+  assert.match((await respond({ type: 3, data: { custom_id: 'btk:gift:' + v.id }, ...MEMBER }, deps)).data.content, /Only server admins/);
+  const modal = await respond({ type: 3, data: { custom_id: 'btk:gift:' + v.id }, ...ADMIN }, deps);
+  assert.equal(modal.type, 9);
+  assert.equal(modal.data.custom_id, 'btk:giftform:' + v.id);
+  const submitted = await respond({ type: 5, data: { custom_id: 'btk:giftform:' + v.id, components: [{ type: 1, components: [{ custom_id: 'count', value: '4' }] }] }, ...ADMIN }, deps);
+  assert.equal(submitted.data.flags, 64);
+  assert.match(submitted.data.content, /Gifted 4 previews/);
+  assert.deepEqual(given, [4]);
+});
+
+test('upload reset works from the command and the button, for admins only', async () => {
+  const { redis, v } = await seeded();
+  const reset = [];
+  const deps = { redis, resetUploads: async (ip) => { reset.push(ip); } };
+  const cmd = await run({ name: 'btk', options: [{ name: 'upload-reset', options: [{ name: 'id', value: v.id }] }] }, deps, ADMIN);
+  assert.match(cmd.content, /can upload photos again/);
+  const denied = await respond({ type: 3, data: { custom_id: 'btk:reset:' + v.id }, ...MEMBER }, deps);
+  assert.match(denied.data.content, /Only server admins/);
+  assert.deepEqual(reset, ['203.0.113.9']);
+});
+
+test('an order number finds its buyer', async () => {
+  const { linkOrder } = await import('../lib/visitor-log.js');
+  const { redis, v } = await seeded();
+  await linkOrder(redis, v.id, ['#btk-1234', '6512345678']);
+  const deps = { redis, giftedPreviews: async () => 0 };
+  const order = (number) => run({ name: 'btk', options: [{ name: 'order', options: [{ name: 'number', value: number }] }] }, deps);
+  for (const number of ['#btk-1234', 'BTK-1234', '6512345678']) assert.equal((await order(number)).embeds[0].title, '👤 Visitor ' + v.id);
+  assert.match((await order('#btk-9')).content, /No buyer found/);
+});
+
+test('today and balance answer with their cards', async () => {
+  const redis = fakeRedis();
+  redis.pfcount = () => 7;
+  const day = { day: '2026-11-18', visitors: 7, count: { visits: 9, preview_started: 3, preview_ready: 2, checkout_completed: 1 }, revenue: { USD: 71.99 }, sources: { Google: 5, Instagram: 2 }, countries: { US: 4 } };
+  const { todayEmbed, balanceEmbed } = await import('../lib/btk-bot.js');
+  const today = todayEmbed(day);
+  assert.ok(today.fields.some((f) => f.name === 'Previews' && f.value === '3 started · 2 ready · 0 failed'));
+  assert.ok(today.fields.some((f) => f.name === 'Revenue' && f.value === '71.99 USD'));
+
+  const at = new Date('2026-11-10T00:00:00Z');
+  const deps = { redis, falBalance: async () => 12.5, openaiBalance: async () => ({ anchor: 50, at, spent: 10, left: 40 }), higgsfieldBalance: async () => null };
+  const card = (await run({ name: 'btk', options: [{ name: 'balance' }] }, deps)).embeds[0];
+  assert.match(card.fields[0].value, /\$12\.50/);
+  assert.match(card.fields[1].value, /≈ \$40\.00/);
+  assert.match(card.fields[2].value, /Not set up/);
+  assert.match(balanceEmbed({ fal: null, openai: { error: 'down', anchor: 1, at }, higgsfield: null }).fields[1].value, /Could not read it/);
 });

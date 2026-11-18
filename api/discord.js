@@ -1,6 +1,6 @@
 // POST /api/discord  (also /discord)
 // The Discord app's Interactions Endpoint URL: Discord posts each /btk
-// command here (lib/btk-bot.js). Every request is checked against the app's
+// command, card button press and form here (lib/btk-bot.js). Every request is checked against the app's
 // public key (DISCORD_PUBLIC_KEY); a bad signature gets 401, which is also
 // how Discord tests the URL when it is saved.
 //
@@ -12,15 +12,14 @@
 import { waitUntil } from '@vercel/functions';
 import { getRedis } from '../lib/redis.js';
 import { rawBody } from '../lib/raw-body.js';
-import { runCommand, validInteraction } from '../lib/btk-bot.js';
+import { Interaction, respond, validInteraction } from '../lib/btk-bot.js';
 
 export const config = { api: { bodyParser: false } };
 
-const PING = 1;
-const COMMAND = 2;
 const PONG = 1;
 const MESSAGE = 4;
 const DEFERRED_MESSAGE = 5;
+const MODAL = 9;
 const EPHEMERAL = 64;
 
 // Under Discord's 3 seconds, with room for the response to travel.
@@ -69,16 +68,20 @@ export default async function handler(req, res) {
   let interaction = null;
   try { interaction = JSON.parse(raw.toString('utf8')); } catch (e) { interaction = null; }
   if (!interaction) return res.status(400).json({ error: 'bad-request' });
-  if (interaction.type === PING) return res.status(200).json({ type: PONG });
-  if (interaction.type !== COMMAND) return res.status(400).json({ error: 'unsupported-interaction' });
+  if (interaction.type === Interaction.ping) return res.status(200).json({ type: PONG });
+  if (![Interaction.command, Interaction.component, Interaction.modal].includes(interaction.type)) {
+    return res.status(400).json({ error: 'unsupported-interaction' });
+  }
 
   const guild = process.env.DISCORD_GUILD_ID;
   if (guild && interaction.guild_id !== guild) {
     return res.status(200).json({ type: MESSAGE, data: { content: 'Not available here.', flags: EPHEMERAL } });
   }
-  const pending = runCommand(interaction.data, { redis: getRedis() });
-  const message = await Promise.race([pending, new Promise((resolve) => setTimeout(resolve, INLINE_MS, null))]);
-  if (message) return res.status(200).json({ type: MESSAGE, data: withoutMentions(message) });
-  res.status(200).json({ type: DEFERRED_MESSAGE });
-  waitUntil(pending.then((late) => editAnswer(interaction, late)));
+  const pending = respond(interaction, { redis: getRedis() });
+  const reply = await Promise.race([pending, new Promise((resolve) => setTimeout(resolve, INLINE_MS, null))]);
+  if (reply) return res.status(200).json(reply.data && reply.type !== MODAL ? { ...reply, data: withoutMentions(reply.data) } : reply);
+  // Too slow: "thinking…" now, the answer as a new message (private for a button or form).
+  const flags = interaction.type === Interaction.command ? 0 : EPHEMERAL;
+  res.status(200).json({ type: DEFERRED_MESSAGE, data: { flags } });
+  waitUntil(pending.then((late) => editAnswer(interaction, late.data || {})));
 }

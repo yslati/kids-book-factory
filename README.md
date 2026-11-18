@@ -117,7 +117,16 @@ Every card's **Visitor** field ends with a Visitor ID (`V-3f9a2c1d`), and every 
 
 Each visitor's steps (pages, searches, previews, covers, ratings, fixes, shares, carts, checkouts, orders, chats, errors and limits) are kept in Upstash, newest 200 for 90 days (`kbf:who:<id>`, `lib/visitor-log.js`); a cover's generation id points back to its visitor.
 
-In Discord, `/btk customer id:<Visitor ID or generation ID>` shows that timeline (`lib/btk-bot.js`, `api/discord.js`). Setup: in the Discord Developer Portal, set the app's **Interactions Endpoint URL** to `https://<backend>/discord`; in Vercel, set `DISCORD_PUBLIC_KEY` (the app's public key) and `DISCORD_GUILD_ID` (our server); then register the command with `scripts/discord-commands.mjs`. Server admins only.
+In Discord, `/btk` (`lib/btk-bot.js`, `api/discord.js`) has:
+
+- `customer id:` the timeline, found by Visitor ID or generation ID, 25 steps a page (Older / Newer buttons), with buttons to gift previews (a form asks how many), reset uploads, and open the visitor's Clarity recordings (the storefront gives Clarity Shopify's visitor id as its custom user id).
+- `order number:` the same, found from an order (`#btk-1234` or its id; orders are linked by the order webhook when the pixel saw the buyer).
+- `today`: the UTC day's funnel so far.
+- `gift id: count:` up to 20 extra previews for the visitor's last IP, used once every free window is spent, for 24 hours (`kbf:gift:<ip>`, `lib/ratelimit.js`).
+- `upload-reset id:` that IP's photo upload window back to full.
+- `balance`: fal's exact credit and the OpenAI and Higgsfield estimates.
+
+Gifts and resets need Administrator or Manage Server, go on the visitor's timeline and are posted to #logs. Setup: in the Discord Developer Portal, set the app's **Interactions Endpoint URL** to `https://<backend>/discord`; in Vercel, set `DISCORD_PUBLIC_KEY` (the app's public key) and `DISCORD_GUILD_ID` (our server); then register the command with `scripts/discord-commands.mjs`. Server admins only.
 
 ### #logs: error reports
 
