@@ -2,7 +2,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { balanceAnchor, jobOutcome, openaiCheckMessage, spendRows, trackOpenAIJob } from '../lib/openai-feed.js';
+import { jobOutcome, openaiCheckMessage, spendRows, trackOpenAIJob } from '../lib/openai-feed.js';
 
 const SUNBURST = { provider: 'openai', model: 'gpt-image-2.5-sunburst', quality: 'medium' };
 const DAY = '2026-11-12';
@@ -17,7 +17,6 @@ function input(overrides = {}) {
       [DAY]: { 'gpt-image-2.5-sunburst medium': { completed: 4, ms: 120000, usd6: 280000, timeout: 1 } },
       '2026-11-08': { 'gpt-image-2.5-sunburst medium': { completed: 10, ms: 300000, usd6: 700000 } }
     },
-    anchor: { anchor: 5, at: new Date('2026-11-01T10:00:00Z') },
     inChain: false,
     ...overrides
   };
@@ -55,7 +54,7 @@ test('spend rows turn the counted jobs into dollars per model and day', () => {
   assert.deepEqual(rows.find((r) => r.day === DAY), { day: DAY, name: 'gpt-image-2.5-sunburst medium', quantity: 4, cost: 0.28 });
 });
 
-test('a healthy check shows the key, models, jobs with cost each, spend and the estimated balance', () => {
+test('a healthy check shows the key, models, jobs with cost each, spend and the billing link', () => {
   const { embed, problems } = openaiCheckMessage(input());
   assert.equal(problems.length, 0);
   assert.equal(fieldValue(embed, 'API key'), '✅ accepted');
@@ -64,7 +63,7 @@ test('a healthy check shows the key, models, jobs with cost each, spend and the 
   assert.match(fieldValue(embed, 'Spent the day before (UTC)'), /Total \$0\.28/);
   assert.match(fieldValue(embed, 'Last 7 days'), /\$0\.98/);
   // $5 read on 1 November, $0.98 spent since.
-  assert.match(fieldValue(embed, 'Balance'), /≈ \$4\.02 left/);
+  assert.match(fieldValue(embed, 'Balance'), /No API for it: see the \[billing page\]/);
   assert.match(fieldValue(embed, 'Cover chain'), /off/);
 });
 
@@ -76,11 +75,4 @@ test('a rejected key, a missing model and refusals the day before are called out
   const quota = openaiCheckMessage(input({ jobsByDay: { [DAY]: { 'gpt-image-2.5-sunburst medium': { 'insufficient-quota': 3 } } } }));
   assert.match(quota.embed.description, /⚠️ .*3 × insufficient quota/);
   assert.equal(quota.problems.length, 0);
-});
-
-test('the balance anchor needs both values', () => {
-  assert.equal(balanceAnchor({}), null);
-  assert.equal(balanceAnchor({ OPENAI_BALANCE_USD: '5' }), null);
-  assert.deepEqual(balanceAnchor({ OPENAI_BALANCE_USD: '5', OPENAI_BALANCE_AT: '2026-11-13T17:00:00Z' }), { anchor: 5, at: new Date('2026-11-13T17:00:00Z') });
-  assert.match(openaiCheckMessage(input({ anchor: null })).embed.fields.find((f) => f.name === 'Balance').value, /See the \[billing page\]/);
 });
