@@ -245,11 +245,10 @@ test('today and balance answer with their cards', async () => {
   assert.ok(today.fields.some((f) => f.name === 'Previews' && f.value === '3 started · 2 ready · 0 failed'));
   assert.ok(today.fields.some((f) => f.name === 'Revenue' && f.value === '71.99 USD'));
 
-  const at = new Date('2026-11-10T00:00:00Z');
-  const deps = { redis, falBalance: async () => 12.5, openaiBalance: async () => ({ anchor: 50, at, spent: 10, left: 40 }), higgsfieldBalance: async () => null };
+  const deps = { redis, falBalance: async () => 12.5 };
   const card = (await run({ name: 'btk', options: [{ name: 'balance' }] }, deps)).embeds[0];
   assert.match(card.fields[0].value, /\$12\.50/);
-  assert.match(card.fields[1].value, /≈ \$40\.00/);
-  assert.match(card.fields[2].value, /Not set up/);
-  assert.match(balanceEmbed({ fal: null, openai: { error: 'down', anchor: 1, at }, higgsfield: null }).fields[1].value, /Could not read it/);
+  assert.match(card.fields[1].value, /No balance API/);
+  assert.match(card.fields[2].value, /No balance API/);
+  assert.match(balanceEmbed({ fal: null }).fields[0].value, /Could not read it/);
 });
