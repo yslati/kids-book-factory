@@ -128,3 +128,24 @@ test('a request\'s visitor carries the ID from the body\'s Shopify id, shown und
   assert.equal(visitorOf({ headers }).id, visitorId({ ip: '203.0.113.9', userAgent: 'UA' }));
   assert.ok(place(fromJson).endsWith('\n`' + fromJson.id + '`'));
 });
+
+test('a /btk command is answered in the response itself, not by a later edit', async () => {
+  const { PassThrough } = await import('node:stream');
+  const { publicKey, privateKey } = generateKeyPairSync('ed25519');
+  process.env.DISCORD_PUBLIC_KEY = publicKey.export({ format: 'der', type: 'spki' }).subarray(12).toString('hex');
+  process.env.DISCORD_GUILD_ID = '42';
+  const { default: handler } = await import('../api/discord.js');
+  const body = JSON.stringify({ type: 2, guild_id: '42', application_id: '1', token: 't', data: { name: 'btk', options: [{ type: 1, name: 'customer', options: [{ name: 'id', value: 'V-3f9a2c1d' }] }] } });
+  const ts = '1795012414';
+  const req = new PassThrough();
+  req.method = 'POST';
+  req.headers = { 'x-signature-ed25519': sign(null, Buffer.from(ts + body), privateKey).toString('hex'), 'x-signature-timestamp': ts };
+  req.end(body);
+  const sent = {};
+  const res = { status(code) { sent.status = code; return this; }, json(payload) { sent.body = payload; return this; } };
+  await handler(req, res);
+  assert.equal(sent.status, 200);
+  assert.equal(sent.body.type, 4);
+  assert.match(sent.body.data.content, /Redis is not configured/);
+  assert.deepEqual(sent.body.data.allowed_mentions, { parse: [] });
+});
