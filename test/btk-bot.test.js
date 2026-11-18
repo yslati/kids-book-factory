@@ -285,3 +285,14 @@ test('a verified customer joins the timeline once and finds the visitor by admin
   assert.equal((await find('31427367502074')).embeds[0].title, '👤 Visitor ' + phone.id);
   assert.match((await find('https://admin.shopify.com/store/eytisc-0a/customers/999')).content, /No visitor found/);
 });
+
+test('a customer id on a card links to its Shopify admin page', async () => {
+  const { customerLink } = await import('../lib/discord.js');
+  const before = process.env.SHOPIFY_SHOP;
+  process.env.SHOPIFY_SHOP = 'eytisc-0a.myshopify.com';
+  assert.equal(customerLink('31427367502074'), '[31427367502074](https://admin.shopify.com/store/eytisc-0a/customers/31427367502074)');
+  assert.equal(customerLink('abc'), 'abc');
+  process.env.SHOPIFY_SHOP = '';
+  assert.equal(customerLink('31427367502074'), '31427367502074');
+  process.env.SHOPIFY_SHOP = before || '';
+});
