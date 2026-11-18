@@ -45,7 +45,8 @@
       "excludeFiles": "node_modules/@img/sharp-*musl*/**"
     },
     "api/discord.js": {
-      "maxDuration": 10
+      "maxDuration": 30,
+      "excludeFiles": "node_modules/@img/sharp-*musl*/**"
     }
   },
   "rewrites": [
