@@ -47,7 +47,7 @@
 //   1. Verify origin + the one-time preview pass from /upload-url (else a
 //      Turnstile token).
 //   2. Resolve cover + prompt SERVER-SIDE from Shopify by theme_id (anti-tamper),
-//      crop the photo to the face (lib/child-photo.js), refuse a covered face
+//      prepare the photo (lib/child-photo.js), refuse a covered face
 //      (lib/face-check.js), then charge the allowance (lib/ratelimit.js
 //      chargeGeneration: 4 a day per IP, 2 more once signed in).
 //   3. Generate ([cover, child] + prompt) via lib/generate.js, which tries an
@@ -314,7 +314,7 @@ async function runPreview(req, res, p) {
   const { themeId, photoKey, generationId, childName, ageText, language, locale, customer, startedAt, fix } = p;
 
   // 2. The cover and prompt come from the product's own metafields while the
-  //    photo is cropped to the face (and shrunk if full-size). A covered or
+  //    photo is prepared (lib/child-photo.js: shrunk if full-size). A covered or
   //    unreadable face is refused before the allowance is charged or anything
   //    is paid for; a fix keeps the photo its cover was made from, so it only
   //    takes the face description from the same look.
