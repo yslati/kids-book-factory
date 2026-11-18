@@ -43,6 +43,9 @@
     "api/cron/[job].js": {
       "maxDuration": 60,
       "excludeFiles": "node_modules/@img/sharp-*musl*/**"
+    },
+    "api/discord.js": {
+      "maxDuration": 10
     }
   },
   "rewrites": [
@@ -63,6 +66,10 @@
     {
       "source": "/share/:id",
       "destination": "/api/share?id=:id"
+    },
+    {
+      "source": "/discord",
+      "destination": "/api/discord"
     },
     {
       "source": "/upload-url",

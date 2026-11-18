@@ -16,22 +16,12 @@ import { postLiveEvent } from '../lib/event-feed.js';
 import { appendRows, storefrontRows } from '../lib/sheet.js';
 import { orderFromWebhook, validSignature } from '../lib/shopify-order.js';
 import { trafficSource } from '../lib/traffic-source.js';
+import { rawBody } from '../lib/raw-body.js';
 
-// The signature covers the exact bytes Shopify sent.
+// The signature covers the exact bytes Shopify sent (lib/raw-body.js).
 export const config = { api: { bodyParser: false } };
 
 const OWN_HOSTS = allowedHosts();
-
-// Vercel's Node helpers read the body first and replay it to 'data' and
-// 'end' listeners only, so the stream can't be iterated directly.
-function rawBody(req) {
-  return new Promise((resolve, reject) => {
-    const chunks = [];
-    req.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-    req.on('end', () => resolve(Buffer.concat(chunks)));
-    req.on('error', reject);
-  });
-}
 
 async function record(order, requestId) {
   try {
@@ -40,8 +30,9 @@ async function record(order, requestId) {
     const redis = getRedis();
     const counted = await recordOrder(redis, order.id, event, source);
     if (counted === false) return;
-    const visitor = { ...order.visitor, requestId };
-    const recorded = { visit: null, source, journey: await readJourney(redis, order.id) };
+    const journey = await readJourney(redis, order.id);
+    const visitor = { ...order.visitor, requestId, id: (journey && journey.visitorId) || '' };
+    const recorded = { visit: null, source, journey };
     const sheet = storefrontRows(event, recorded, visitor);
     await Promise.all([
       postLiveEvent(event, recorded, visitor),

@@ -29,6 +29,8 @@ import { orderWebhookOn } from '../lib/shopify-order.js';
 import { chatOpened, chatRecord, postChatOpened } from '../lib/chat-feed.js';
 import { Audience, resolveAudience } from '../lib/audience.js';
 import { recordBotVisit } from '../lib/bot-feed.js';
+import { visitorId } from '../lib/visitor-id.js';
+import { Step, logStep } from '../lib/visitor-log.js';
 
 // Events that are a page view, for the bot streams.
 const PAGE_VIEWS = ['page_viewed', 'crawler_seen'];
@@ -56,6 +58,19 @@ function overLimit(ip, max = LIMIT_EVENTS) {
   return entry.count > max;
 }
 
+// The pixel events a visitor's timeline keeps (lib/visitor-log.js).
+function timelineStep(event) {
+  const money = (m) => (m ? m.amount + ' ' + m.currency : '');
+  switch (event.name) {
+    case 'page_viewed': return { kind: Step.page, text: event.path };
+    case 'search_submitted': return event.search ? { kind: Step.search, text: '"' + event.search.query + '" · ' + event.search.results + ' results' } : null;
+    case 'product_added_to_cart': return event.product ? { kind: Step.cart, text: [event.product.title, event.product.variant].filter(Boolean).join(' · ') } : null;
+    case 'checkout_started': return { kind: Step.checkout, text: event.checkout ? money(event.checkout.total) : '' };
+    case 'checkout_completed': return { kind: Step.order, text: event.checkout ? money(event.checkout.total) : '' };
+    default: return null;
+  }
+}
+
 async function record(event, visitor) {
   try {
     const redis = getRedis();
@@ -68,12 +83,15 @@ async function record(event, visitor) {
     }
     // A person's browser that merely looks automated to the beacon.
     if (event.name === 'crawler_seen') return;
+    visitor.id = visitorId({ key: event.consented ? event.clientId : '', ip: visitor.ip, userAgent: visitor.userAgent });
+    const step = timelineStep(event);
+    if (step) await logStep(redis, visitor, step);
     if (!event.consented) event.clientId = await cookielessId(redis, visitor);
     // Shopify's order webhook (api/shopify-webhook.js) reports every order,
     // signed; the pixel's can be missed or faked, so it only tells the
     // webhook's card how the buyer got here.
     if (event.name === 'checkout_completed' && orderWebhookOn()) {
-      await saveJourney(redis, event.checkout && event.checkout.orderId, event.clientId);
+      await saveJourney(redis, event.checkout && event.checkout.orderId, event.clientId, visitor.id);
       return;
     }
     // A first page view after consent may continue a cookieless visit.
@@ -104,6 +122,7 @@ export default async function handler(req, res) {
     if (overLimit('chat:' + visitor.ip, LIMIT_CHATS)) return res.status(429).json({ error: 'rate-limited' });
     res.status(204).end();
     waitUntil(chatRecord(chat).then((record) => Promise.all([
+      logStep(getRedis(), visitor, { kind: Step.chat, text: chat.path, generation: '' }),
       postChatOpened(chat, visitor, record).catch((e) => console.error('[events] chat alert failed:', (e && e.stack) || e)),
       appendRows(TABS.chats, [chatRow(chat, visitor, record)])
     ])));

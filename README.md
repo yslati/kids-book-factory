@@ -111,6 +111,14 @@ The backend posts to Discord channels through their incoming webhooks, one envir
 
 Three webhooks can share one Discord channel: each posts under its own name and avatar, which is how the three bot streams live in #bots. A stream whose variable is unset falls back to the channel it was split from (#logs for reports, #visits for visits), so nothing is lost before the variable exists.
 
+### Visitor ID and /btk
+
+Every card's **Visitor** field ends with a Visitor ID (`V-3f9a2c1d`), and every sheet row has a **Visitor ID** column. It is a keyed hash (`CRON_SECRET`) of Shopify's visitor id: the pixel's `clientId`, or the `visitor` the storefront sends with its API calls when analytics are allowed. Without one, the IP and user agent of that UTC day stand in, so a visitor without consent gets a new ID each day (`lib/visitor-id.js`).
+
+Each visitor's steps (pages, searches, previews, covers, ratings, fixes, shares, carts, checkouts, orders, chats, errors and limits) are kept in Upstash, newest 200 for 90 days (`kbf:who:<id>`, `lib/visitor-log.js`); a cover's generation id points back to its visitor.
+
+In Discord, `/btk customer id:<Visitor ID or generation ID>` shows that timeline (`lib/btk-bot.js`, `api/discord.js`). Setup: in the Discord Developer Portal, set the app's **Interactions Endpoint URL** to `https://<backend>/discord`; in Vercel, set `DISCORD_PUBLIC_KEY` (the app's public key) and `DISCORD_GUILD_ID` (our server); then register the command with `scripts/discord-commands.mjs`. Server admins only.
+
 ### #logs: error reports
 
 - **API:** every route is wrapped in `withReporting` (`lib/report.js`). A request is reported when it answers `>= 400` or logs a `console.warn`/`console.error` (a fallback model, a cover kept on the provider's URL, a rejected Turnstile token, a Redis error...). It becomes one message: status and error code, the request's log lines with timings, and the book, generation id, language, customer (verified id or anonymous), duration, IP, country/region/city, IP time zone, device, user agent, origin and Vercel request id (searchable in the Vercel logs). Errors (red) are `5xx` and `console.error`; warnings (amber) are the rest. An unhandled crash answers `500 internal-error` in JSON. Posts run after the response through `waitUntil`, so they never slow a request.
@@ -229,7 +237,7 @@ npx vercel dev         # local, http://localhost:3000
 npx vercel deploy --prod
 ```
 
-Env (see `.env.example`): `HIGGSFIELD_KEY` (`OPENAI_KEY` and `FAL_KEY` only when those providers are switched on or being tested), `R2_*` (+ public bucket URL), `SHOPIFY_SHOP` + `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET` (scopes `read_products`, `write_customers`), `TURNSTILE_SECRET`, `UPSTASH_*`, `PREVIEW_TOKEN_SECRET`, `ALLOWED_ORIGIN`, `DISCORD_WEBHOOK_*`, optionally `SHEET_WEBHOOK_URL` + `SHEET_WEBHOOK_SECRET` for the [requests sheet](#requests-sheet), optionally `SHOPIFY_WEBHOOK_SECRET` for orders from Shopify's order webhook (see [#events](#events-visitors-funnel-and-orders)), and optionally `SHARE_BASE_URL` + `STORE_URL` for short share links (`api/share.js`, served on `s.booktokids.com`); `STORE_URL` also makes the pages in Discord posts links, labelled with the book's title (`lib/store-links.js`). The backend obtains and refreshes Shopify's short-lived Admin API token automatically. Add the same values in the Vercel project, then put the deployed URL in the theme section's **Backend URL** setting.
+Env (see `.env.example`): `HIGGSFIELD_KEY` (`OPENAI_KEY` and `FAL_KEY` only when those providers are switched on or being tested), `R2_*` (+ public bucket URL), `SHOPIFY_SHOP` + `SHOPIFY_CLIENT_ID` + `SHOPIFY_CLIENT_SECRET` (scopes `read_products`, `write_customers`), `TURNSTILE_SECRET`, `UPSTASH_*`, `PREVIEW_TOKEN_SECRET`, `ALLOWED_ORIGIN`, `DISCORD_WEBHOOK_*`, optionally `SHEET_WEBHOOK_URL` + `SHEET_WEBHOOK_SECRET` for the [requests sheet](#requests-sheet), optionally `SHOPIFY_WEBHOOK_SECRET` for orders from Shopify's order webhook (see [#events](#events-visitors-funnel-and-orders)), and optionally `DISCORD_PUBLIC_KEY` + `DISCORD_GUILD_ID` for [/btk](#visitor-id-and-btk), optionally `SHARE_BASE_URL` + `STORE_URL` for short share links (`api/share.js`, served on `s.booktokids.com`); `STORE_URL` also makes the pages in Discord posts links, labelled with the book's title (`lib/store-links.js`). The backend obtains and refreshes Shopify's short-lived Admin API token automatically. Add the same values in the Vercel project, then put the deployed URL in the theme section's **Backend URL** setting.
 
 Smoke test:
 ```bash

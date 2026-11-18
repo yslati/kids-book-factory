@@ -18,7 +18,7 @@ const req = {
   headers: { 'x-forwarded-for': '203.0.113.7', 'x-vercel-ip-country': 'FR', 'x-vercel-ip-city': 'Lyon', 'user-agent': IPHONE }
 };
 const visitor = { country: 'FR', city: 'Lyon', userAgent: IPHONE };
-const PLACE = { Country: 'France', City: 'Lyon', Device: 'iPhone · iOS 18.5 · Mobile Safari 18' };
+const PLACE = { Country: 'France', City: 'Lyon', Device: 'iPhone · iOS 18.5 · Mobile Safari 18', 'Visitor ID': '' };
 
 function withSheet(t, url, secret) {
   const saved = [process.env.SHEET_WEBHOOK_URL, process.env.SHEET_WEBHOOK_SECRET];

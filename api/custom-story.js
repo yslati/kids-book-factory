@@ -28,6 +28,8 @@
 // the requests sheet's Custom stories tab (lib/sheet.js).
 
 import { waitUntil } from '@vercel/functions';
+import { visitorOf } from '../lib/discord.js';
+import { Step, logStep } from '../lib/visitor-log.js';
 import { applyCors, isOriginAllowed } from '../lib/cors.js';
 import { verifyTurnstile } from '../lib/turnstile.js';
 import { redeemPreviewPass } from '../lib/preview-pass.js';
@@ -123,10 +125,13 @@ async function generate(req, res, body, startedAt) {
     const rl = await checkRateLimit(req, customer.valid ? 'custom-cust' : 'custom', customer.valid ? customer.customerId : null);
     const capped = await checkRateLimit(req, 'preview-ip-cap');
     if (!rl.success || !capped.success) {
+      waitUntil(logStep(getRedis(), visitorOf(req), { kind: Step.limit, text: 'no custom stories left today' }));
       return res.status(429).json({ error: 'rate-limited', login_required: !customer.valid, remaining: 0 });
     }
   }
 
+  const visitor = visitorOf(req);
+  waitUntil(logStep(getRedis(), visitor, { kind: Step.custom, text: r.world + ' · ' + r.brief, generation: r.generationId }));
   const photoUrl = publicUrl(r.photoKey);
   const feed = announceCustomStory(req, {
     ...r,
@@ -182,6 +187,7 @@ async function generate(req, res, body, startedAt) {
       .catch((e) => console.warn('[custom-story] record not saved:', (e && e.message) || e)));
     feed.done({ coverUrl, attempt: generated.attempt, stored: kept.stored });
     record({ coverUrl, attempt: generated.attempt, prompt });
+    waitUntil(logStep(redis, visitor, { kind: Step.cover, text: 'custom · ' + r.world, url: coverUrl }));
 
     return res.status(200).json({ preview_url: coverUrl, generation_id: r.generationId, status: 'ready' });
   } catch (err) {
@@ -190,6 +196,7 @@ async function generate(req, res, body, startedAt) {
     const detail = code + (err && err.reason ? ': ' + err.reason : '');
     feed.done({ error: detail });
     record({ error: detail, prompt });
+    waitUntil(logStep(getRedis(), visitor, { kind: Step.failed, text: 'custom · ' + detail }));
     if (code === 'face-not-clear') {
       return res.status(422).json({ error: code, status: 'failed', reason: err.reason, tip: err.tip || '' });
     }

@@ -90,6 +90,7 @@ import { queuePreview } from '../lib/queued-preview.js';
 import { attemptLabel } from '../lib/provider-order.js';
 import { countPreview } from '../lib/visitor-counts.js';
 import { countEvent } from '../lib/event-stats.js';
+import { Step, lastStep, logGenerationStep, logStep } from '../lib/visitor-log.js';
 import { waitUntil } from '@vercel/functions';
 
 // vercel.json gives this function 90s. Generation must finish within 75s of
@@ -116,6 +117,8 @@ async function followUp(req, res, body) {
   if (body.action === 'cart') waitUntil(postDetails(req, value));
   if (body.action === 'share') waitUntil(recordShare(req, value));
   if (body.action === 'rating') waitUntil(postRating(req, value.generationId, value.fields.Rating));
+  if (body.action === 'rating') waitUntil(logGenerationStep(getRedis(), value.generationId, { kind: Step.rating, text: value.fields.Rating + '/5' }));
+  if (body.action === 'share') waitUntil(logGenerationStep(getRedis(), value.generationId, { kind: Step.share, text: value.via }));
 }
 
 // The rating card in #previews: only for a cover this backend made, once per
@@ -235,8 +238,13 @@ function localeOf(body) {
 // The 429 for a parent who has used up their generations. `login_required`
 // drives which message the theme shows. A verified customer who has run out
 // is our warmest lead, so they are tagged for the follow-up email; a tagging
-// failure never changes the response.
-async function refuseOverLimit(res, customer) {
+// failure never changes the response. Their last cover goes in the request's
+// report (lib/report.js), so the 429 card shows whose limit it was.
+async function refuseOverLimit(req, res, customer) {
+  const visitor = visitorOf(req);
+  const last = await lastStep(getRedis(), visitor.id, Step.cover);
+  console.info('[limit] no previews left today' + (last ? ' · last cover ' + (last.url || last.gen) : ''));
+  waitUntil(logStep(getRedis(), visitor, { kind: Step.limit, text: 'no previews left today' }));
   if (customer.valid) {
     try {
       await tagCustomerPreviewLimit(customer.customerId);
@@ -322,11 +330,15 @@ async function runPreview(req, res, p) {
   if (!refused) {
     const allowed = await chargeGeneration(req, customer);
     if (!allowed.success) {
-      await refuseOverLimit(res, customer);
+      await refuseOverLimit(req, res, customer);
       return false;
     }
     p.remaining = allowed.remaining;
   }
+  // Awaited, so this cover's later steps find whose it is.
+  await logStep(getRedis(), visitorOf(req), {
+    kind: fix ? Step.fix : Step.preview, text: fix ? fix.problem : themeId, generation: generationId
+  });
 
   // Counted as generation starts, whether or not it succeeds.
   const counts = countPreview(getRedis(), req, customer.valid ? customer.customerId : null);
