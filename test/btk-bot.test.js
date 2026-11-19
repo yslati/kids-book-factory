@@ -296,3 +296,61 @@ test('a customer id on a card links to its Shopify admin page', async () => {
   assert.equal(customerLink('31427367502074'), '31427367502074');
   process.env.SHOPIFY_SHOP = before || '';
 });
+
+test('/btk share stores the cover and answers with its link, for admins only', async () => {
+  const redis = fakeRedis();
+  const titles = new Map([['the-balance-of-bravery', 'The Balance of Bravery'], ['christmas-star-rescue', 'Christmas Star Rescue']]);
+  const made = [];
+  const deps = {
+    redis,
+    r2Configured: () => true,
+    bookTitles: async () => titles,
+    shareCover: async (r, cover) => { made.push(cover); return { coverUrl: 'https://cdn.example/previews/yara.jpg', shareUrl: 'https://s.booktokids.com/yara-abc234', teamUrl: 'https://s.booktokids.com/yara-abc234?team=1' }; }
+  };
+  const image = { url: 'https://cdn.discordapp.com/attachments/1/2/cover.png', content_type: 'image/png', size: 900000 };
+  const share = (extra, opts = {}) => respond({
+    type: 2,
+    data: {
+      name: 'btk',
+      options: [{ type: 1, name: 'share', options: [
+        { name: 'image', value: 'a1' }, { name: 'name', value: '  Yara  Rita ' }, { name: 'book', value: opts.book || 'the-balance-of-bravery' }, { name: 'age', value: 9 }
+      ] }],
+      resolved: { attachments: { a1: opts.image || image } }
+    },
+    ...extra
+  }, deps);
+
+  assert.match((await share(MEMBER)).data.content, /Only server admins/);
+  assert.match((await share(ADMIN, { book: 'nope' })).data.content, /Pick the book/);
+  assert.match((await share(ADMIN, { image: { ...image, content_type: 'application/pdf' } })).data.content, /JPEG, PNG or WebP/);
+  assert.match((await share(ADMIN, { image: { ...image, url: 'https://evil.example/x.png' } })).data.content, /Attach the cover/);
+
+  const ok = (await share(ADMIN)).data.embeds[0];
+  assert.equal(ok.title, '🔗 Share link for Yara Rita');
+  assert.match(ok.description, /https:\/\/s\.booktokids\.com\/yara-abc234\n/);
+  assert.equal(ok.image.url, 'https://cdn.example/previews/yara.jpg');
+  assert.equal(made.length, 1);
+  assert.deepEqual({ ...made[0], language: made[0].language.code }, {
+    attachment: image, childName: 'Yara Rita', handle: 'the-balance-of-bravery', bookTitle: 'The Balance of Bravery', age: '9', language: 'en'
+  });
+
+  const choices = await respond({ type: 4, data: { name: 'btk', options: [{ name: 'share', options: [{ name: 'book', value: 'christ', focused: true }] }] } }, deps);
+  assert.equal(choices.type, 8);
+  assert.deepEqual(choices.data.choices, [{ name: 'Christmas Star Rescue', value: 'christmas-star-rescue' }]);
+});
+
+test('shareCover stores the image as a JPEG preview cover', async () => {
+  const sharp = (await import('sharp')).default;
+  const png = await sharp({ create: { width: 8, height: 8, channels: 3, background: '#f00' } }).png().toBuffer();
+  const { shareCover } = await import('../lib/btk-share.js');
+  const stored = [];
+  const out = await shareCover(null, {
+    attachment: { url: 'https://cdn.discordapp.com/a/b/c.png', content_type: 'image/png' },
+    childName: 'Yara Rita', handle: 'the-balance-of-bravery', bookTitle: 'The Balance of Bravery', age: '9', language: { code: 'en' }
+  }, { fetchImage: async () => ({ buf: png, contentType: 'image/png' }), put: async (key, body, type) => stored.push({ key, type, jpeg: body[0] === 0xff }) });
+  assert.equal(stored.length, 1);
+  assert.match(stored[0].key, /^previews\/yara-rita_9_en_the-balance-of-bravery_[A-Za-z0-9]+\.jpg$/);
+  assert.deepEqual([stored[0].type, stored[0].jpeg], ['image/jpeg', true]);
+  assert.ok(out.coverUrl.endsWith(stored[0].key));
+  assert.equal(out.shareUrl, '', 'no link without Redis');
+});

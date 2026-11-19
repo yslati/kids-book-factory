@@ -19,7 +19,8 @@ export const config = { api: { bodyParser: false } };
 const PONG = 1;
 const MESSAGE = 4;
 const DEFERRED_MESSAGE = 5;
-const MODAL = 9;
+const UPDATE = 7;
+const CHOICES = 8;
 const EPHEMERAL = 64;
 
 // Under Discord's 3 seconds, with room for the response to travel.
@@ -69,7 +70,7 @@ export default async function handler(req, res) {
   try { interaction = JSON.parse(raw.toString('utf8')); } catch (e) { interaction = null; }
   if (!interaction) return res.status(400).json({ error: 'bad-request' });
   if (interaction.type === Interaction.ping) return res.status(200).json({ type: PONG });
-  if (![Interaction.command, Interaction.component, Interaction.modal].includes(interaction.type)) {
+  if (![Interaction.command, Interaction.component, Interaction.autocomplete, Interaction.modal].includes(interaction.type)) {
     return res.status(400).json({ error: 'unsupported-interaction' });
   }
 
@@ -79,7 +80,9 @@ export default async function handler(req, res) {
   }
   const pending = respond(interaction, { redis: getRedis() });
   const reply = await Promise.race([pending, new Promise((resolve) => setTimeout(resolve, INLINE_MS, null))]);
-  if (reply) return res.status(200).json(reply.data && reply.type !== MODAL ? { ...reply, data: withoutMentions(reply.data) } : reply);
+  if (reply) return res.status(200).json(reply.type === MESSAGE || reply.type === UPDATE ? { ...reply, data: withoutMentions(reply.data) } : reply);
+  // Book suggestions can't wait: none this time.
+  if (interaction.type === Interaction.autocomplete) return res.status(200).json({ type: CHOICES, data: { choices: [] } });
   // Too slow: "thinking…" now, the answer as a new message (private for a button or form).
   const flags = interaction.type === Interaction.command ? 0 : EPHEMERAL;
   res.status(200).json({ type: DEFERRED_MESSAGE, data: { flags } });

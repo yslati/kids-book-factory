@@ -124,11 +124,12 @@ In Discord, `/btk` (`lib/btk-bot.js`, `api/discord.js`) has:
 - `today`: the UTC day's funnel so far.
 - `gift id: count:` up to 20 extra previews for the visitor's last IP, used once every free window is spent, for 24 hours (`kbf:gift:<ip>`, `lib/ratelimit.js`).
 - `upload-reset id:` that IP's photo upload window back to full.
+- `share image: name: book: [age:] [language:]`: a share link for a cover made outside the store. The image is stored in R2 like a preview cover (`previews/…jpg`) and gets the same 30-day short link, opening that book's preview page (`lib/btk-share.js`). `book` autocompletes from the store's products.
 - `balance`: fal's credit (from its API), with links to the OpenAI and Higgsfield billing pages, which have no balance API.
 
 A visitor is linked to a Shopify customer when they make a cover signed in, their earlier covers sync to their account (`/me/previews`), or they order (the order webhook): the card links the customer in the admin and lists the customer's other Visitor IDs, and the timeline gets an *Account* step.
 
-Gifts and resets need Administrator or Manage Server, go on the visitor's timeline and are posted to #logs. Setup: in the Discord Developer Portal, set the app's **Interactions Endpoint URL** to `https://<backend>/discord`; in Vercel, set `DISCORD_PUBLIC_KEY` (the app's public key) and `DISCORD_GUILD_ID` (our server); then register the command with `scripts/discord-commands.mjs`. Server admins only.
+Gifts, resets and share links need Administrator or Manage Server, go on the visitor's timeline and are posted to #logs. Setup: in the Discord Developer Portal, set the app's **Interactions Endpoint URL** to `https://<backend>/discord`; in Vercel, set `DISCORD_PUBLIC_KEY` (the app's public key) and `DISCORD_GUILD_ID` (our server); then register the command with `scripts/discord-commands.mjs`. Server admins only.
 
 ### #logs: error reports
 
