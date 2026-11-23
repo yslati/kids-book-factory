@@ -66,6 +66,7 @@ import { verifyTurnstile } from '../lib/turnstile.js';
 import { redeemPreviewPass } from '../lib/preview-pass.js';
 import { getRedis } from '../lib/redis.js';
 import { chargeGeneration, checkRateLimit, clientIp } from '../lib/ratelimit.js';
+import { isBlocked } from '../lib/blocklist.js';
 import { r2Configured } from '../lib/r2.js';
 import { resolveBook, shopifyConfigured } from '../lib/shopify.js';
 import { abandonPendingCover, generateCover, generationConfigured } from '../lib/generate.js';
@@ -253,6 +254,17 @@ async function refuseOverLimit(req, res, customer) {
   res.status(429).json({ error: 'rate-limited', login_required: !customer.valid, remaining: 0 });
 }
 
+// The 429 a blocked visitor gets (lib/blocklist.js): the same as an
+// exhausted allowance. Resolves true when it was sent.
+async function refuseBlocked(req, res, customer) {
+  const visitor = visitorOf(req);
+  const blocked = await isBlocked(getRedis(), { id: visitor.id, ip: visitor.ip, customer: customer.valid ? customer.customerId : '' });
+  if (!blocked) return false;
+  waitUntil(logStep(getRedis(), visitor, { kind: Step.limit, text: 'blocked' }));
+  res.status(429).json({ error: 'rate-limited', login_required: false, remaining: 0 });
+  return true;
+}
+
 // The free fix: one per cover, its photo, book, name and age read back from
 // the cover's record. The claim is given back when generation fails. It
 // doesn't count against the free previews: each fix needs a cover that did.
@@ -312,6 +324,10 @@ async function fixPreview(req, res, body, startedAt) {
 // Resolves to true when the cover is ready or queued.
 async function runPreview(req, res, p) {
   const { themeId, photoKey, generationId, childName, ageText, language, locale, customer, startedAt, fix } = p;
+
+  // A visitor blocked with /btk block is told their previews are used up,
+  // before anything is paid for.
+  if (await refuseBlocked(req, res, customer)) return false;
 
   // 2. The cover and prompt come from the product's own metafields while the
   //    photo is prepared (lib/child-photo.js: shrunk if full-size). A covered or
