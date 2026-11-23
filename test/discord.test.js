@@ -269,7 +269,7 @@ test('a burst queues for the window: every post arrives, in order, with no 429',
 
 test('without Upstash, a post that misses the deadline is lost, and the next one says so', async (t) => {
   withWebhooks(t, { DISCORD_WEBHOOK_LOGS: LOGS });
-  withDeadline(t, 3000);
+  withDeadline(t, 8500);
   let ok = false;
   const calls = stubFetch(t, () => (ok
     ? limited(204)
