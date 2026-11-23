@@ -237,7 +237,8 @@ test('a block covers the visitor, their IP and customer, shows on the card and l
   const { linkCustomer } = await import('../lib/visitor-log.js');
   const { redis, v } = await seeded();
   await linkCustomer(redis, v.id, '9876543210', 'signed in');
-  const deps = { redis, giftedPreviews: async () => 0 };
+  const rows = [];
+  const deps = { redis, giftedPreviews: async () => 0, later: () => {}, appendRows: async (tab, r) => { rows.push([tab, ...r]); return true; } };
   const cmd = (name, extra, more = []) => run({ name: 'btk', options: [{ name, options: [{ name: 'id', value: v.id }, ...more] }] }, deps, extra);
 
   assert.match((await cmd('block', MEMBER)).content, /Only server admins/);
@@ -257,6 +258,13 @@ test('a block covers the visitor, their IP and customer, shows on the card and l
   assert.match((await cmd('unblock', ADMIN)).content, /is not blocked/);
   const timeline = await readTimeline(redis, v.id);
   assert.deepEqual(timeline.steps.slice(0, 2).map((s) => s.kind), [Step.unblock, Step.block]);
+
+  assert.deepEqual(rows.map(([tab, r]) => [tab, r.Action, r['Visitor ID'], r.IP, r.Customer, r.By]), [
+    ['Blocked', 'Blocked', v.id, '203.0.113.9', '9876543210', 'shark'],
+    ['Blocked', 'Unblocked', v.id, '203.0.113.9', '9876543210', 'shark']
+  ]);
+  assert.equal(rows[0][1].Days, 7);
+  assert.match(rows[0][1].Until, /^\d{4}-\d\d-\d\dT/);
 
   const viaButton = await respond({ type: 3, data: { custom_id: 'btk:block:' + v.id }, ...ADMIN }, deps);
   assert.match(viaButton.data.content, /for 30 days/);
