@@ -27,7 +27,9 @@ function fakeRedis() {
     hgetall(k) { return hashes.get(k) || null; },
     hget(k, f) { const h = hashes.get(k); return h && f in h ? h[f] : null; },
     sadd(k, v) { const set = sets.get(k) || new Set(); set.add(v); sets.set(k, set); return 1; },
-    smembers(k) { return [...(sets.get(k) || [])]; }
+    smembers(k) { return [...(sets.get(k) || [])]; },
+    mget(...ks) { return ks.map((k) => (strings.has(k) ? strings.get(k) : null)); },
+    del(...ks) { ks.forEach((k) => strings.delete(k)); return ks.length; }
   };
   return {
     ...ops,
@@ -177,10 +179,10 @@ test('a long timeline pages with Older and Newer buttons, and links Clarity', as
   const { redis, v } = await seeded(30);
   const deps = { redis, giftedPreviews: async () => 0 };
   const first = await run({ name: 'btk', options: [{ name: 'customer', options: [{ name: 'id', value: v.id }] }] }, deps);
-  const labels = first.components[0].components.map((b) => b.label);
-  assert.deepEqual(labels, ['Older steps', 'Gift previews', 'Reset uploads', 'Clarity recordings']);
+  const labels = first.components.map((row) => row.components.map((b) => b.label));
+  assert.deepEqual(labels, [['Older steps', 'Clarity recordings'], ['Gift previews', 'Reset uploads', 'Block']]);
   assert.match(first.embeds[0].footer.text, /Steps 1–25 of 30/);
-  assert.equal(first.components[0].components[3].url, clarityUrl(v.key));
+  assert.equal(first.components[0].components[1].url, clarityUrl(v.key));
   assert.match(clarityUrl(v.key), /CustomUserId=is%3B2bd80319-59e3-49b8-bf4d-1455476a5264$/);
 
   const older = await respond({ type: 3, data: { custom_id: 'btk:page:' + v.id + ':25' }, ...MEMBER }, deps);
@@ -228,6 +230,42 @@ test('upload reset works from the command and the button, for admins only', asyn
   const denied = await respond({ type: 3, data: { custom_id: 'btk:reset:' + v.id }, ...MEMBER }, deps);
   assert.match(denied.data.content, /Only server admins/);
   assert.deepEqual(reset, ['203.0.113.9']);
+});
+
+test('a block covers the visitor, their IP and customer, shows on the card and lifts', async () => {
+  const { isBlocked } = await import('../lib/blocklist.js');
+  const { linkCustomer } = await import('../lib/visitor-log.js');
+  const { redis, v } = await seeded();
+  await linkCustomer(redis, v.id, '9876543210', 'signed in');
+  const deps = { redis, giftedPreviews: async () => 0 };
+  const cmd = (name, extra, more = []) => run({ name: 'btk', options: [{ name, options: [{ name: 'id', value: v.id }, ...more] }] }, deps, extra);
+
+  assert.match((await cmd('block', MEMBER)).content, /Only server admins/);
+  assert.equal(await isBlocked(redis, { id: v.id }), false);
+  assert.match((await cmd('block', ADMIN, [{ name: 'days', value: 7 }])).content, /Blocked .*203\.0\.113\.9.*customer 9876543210 for 7 days/);
+  assert.equal(await isBlocked(redis, { id: 'V-00000000', ip: '203.0.113.9' }), true);
+  assert.equal(await isBlocked(redis, { id: 'V-00000000', customer: '9876543210' }), true);
+  assert.equal(await isBlocked(redis, { id: 'V-00000000', ip: '198.51.100.1' }), false);
+
+  const card = await cmd('customer', MEMBER);
+  assert.ok(card.embeds[0].fields.some((f) => /Blocked/.test(f.name) && /by shark/.test(f.value)));
+  assert.equal(card.components[1].components[2].custom_id, 'btk:unblock:' + v.id);
+
+  const lifted = await respond({ type: 3, data: { custom_id: 'btk:unblock:' + v.id }, ...ADMIN }, deps);
+  assert.match(lifted.data.content, /can make covers again/);
+  assert.equal(await isBlocked(redis, { id: v.id, ip: '203.0.113.9', customer: '9876543210' }), false);
+  assert.match((await cmd('unblock', ADMIN)).content, /is not blocked/);
+  const timeline = await readTimeline(redis, v.id);
+  assert.deepEqual(timeline.steps.slice(0, 2).map((s) => s.kind), [Step.unblock, Step.block]);
+
+  const viaButton = await respond({ type: 3, data: { custom_id: 'btk:block:' + v.id }, ...ADMIN }, deps);
+  assert.match(viaButton.data.content, /for 30 days/);
+});
+
+test('the block check fails open', async () => {
+  const { isBlocked } = await import('../lib/blocklist.js');
+  assert.equal(await isBlocked({ mget: async () => { throw new Error('down'); } }, { id: 'V-12345678' }), false);
+  assert.equal(await isBlocked(null, { id: 'V-12345678' }), false);
 });
 
 test('an order number finds its buyer', async () => {

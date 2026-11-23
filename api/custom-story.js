@@ -35,6 +35,7 @@ import { verifyTurnstile } from '../lib/turnstile.js';
 import { redeemPreviewPass } from '../lib/preview-pass.js';
 import { getRedis } from '../lib/redis.js';
 import { checkRateLimit, clientIp } from '../lib/ratelimit.js';
+import { isBlocked } from '../lib/blocklist.js';
 import { publicUrl, r2Configured } from '../lib/r2.js';
 import { flushPendingCovers, storeCover } from '../lib/cover-store.js';
 import { resolveBook, shopifyConfigured } from '../lib/shopify.js';
@@ -114,6 +115,11 @@ async function generate(req, res, body, startedAt) {
   // backstop shared with /preview, which caps what one machine can spend on
   // both together.
   const customer = verifyCustomerToken(body);
+  const asker = visitorOf(req);
+  if (await isBlocked(getRedis(), { id: asker.id, ip: asker.ip, customer: customer.valid ? customer.customerId : '' })) {
+    waitUntil(logStep(getRedis(), asker, { kind: Step.limit, text: 'blocked' }));
+    return res.status(429).json({ error: 'rate-limited', login_required: false, remaining: 0 });
+  }
   const bookLoad = resolveBook(r.reference);
   bookLoad.catch(() => { /* awaited below */ });
   const photo = await prepareChildPhoto(r.photoKey);
