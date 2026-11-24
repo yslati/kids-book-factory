@@ -165,6 +165,7 @@ async function open(req, res) {
     shortUrl: SHARE_BASE + '/' + id,
     target: target.url,
     childName: target.childName,
-    coverUrl: target.coverUrl
+    coverUrl: target.coverUrl,
+    language: target.language
   }));
 }
