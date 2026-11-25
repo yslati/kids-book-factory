@@ -30,7 +30,44 @@ import { chatOpened, chatRecord, postChatOpened } from '../lib/chat-feed.js';
 import { Audience, resolveAudience } from '../lib/audience.js';
 import { recordBotVisit } from '../lib/bot-feed.js';
 import { visitorId } from '../lib/visitor-id.js';
-import { Step, logStep } from '../lib/visitor-log.js';
+import { Step, addStep, logStep, visitorOfGeneration } from '../lib/visitor-log.js';
+import { isShareSlug } from '../lib/share-link.js';
+import { linkKey, parseRow } from '../lib/share-store.js';
+
+// A visit from a shared link: who shared it (the cover's maker), on the visit
+// and on both visitors' timelines.
+async function noteSharedVisit(redis, recorded, visitor) {
+  try {
+    await sharedVisit(redis, recorded, visitor);
+  } catch (e) {
+    console.warn('[events] shared visit not linked:', (e && e.message) || e);
+  }
+}
+
+async function sharedVisit(redis, recorded, visitor) {
+  if (!recorded || !recorded.visit || !recorded.source || recorded.source.label !== 'shared link') return;
+  const id = recorded.source.campaign;
+  const link = isShareSlug(id) ? parseRow(await redis.get(linkKey(id))) : null;
+  const sharer = link && link.generationId ? await visitorOfGeneration(redis, link.generationId) : '';
+  recorded.sharedBy = sharer;
+  if (!id) return;
+  await logStep(redis, visitor, { kind: Step.share, text: 'Came from shared link ' + id + (sharer ? ' by ' + sharer : '') });
+  if (sharer && sharer !== visitor.id) {
+    await addStep(redis, sharer, { kind: Step.share, text: 'Shared link ' + id + ' opened by ' + (visitor.id || 'a new visitor') });
+  }
+}
+
+// Cookie consent given mid-visit: the cookieless Visitor ID of that day and
+// the lasting one point at each other, so /btk customer finds both.
+async function noteConsent(redis, recorded, visitor) {
+  if (!recorded || !recorded.continued) return;
+  const before = visitorId({ ip: visitor.ip, userAgent: visitor.userAgent });
+  if (!before || before === visitor.id) return;
+  await Promise.all([
+    addStep(redis, before, { kind: Step.account, text: 'Accepted cookies, continues as ' + visitor.id }),
+    addStep(redis, visitor.id, { kind: Step.account, text: 'Before accepting cookies: ' + before })
+  ]);
+}
 
 // Events that are a page view, for the bot streams.
 const PAGE_VIEWS = ['page_viewed', 'crawler_seen'];
@@ -99,6 +136,7 @@ async function record(event, visitor) {
     // A first page view after consent may continue a cookieless visit.
     const anonId = event.consented && event.name === 'page_viewed' ? await cookielessId(redis, visitor) : '';
     const recorded = event.clientId ? await recordEvent(redis, event, { country: visitor.country, ownHosts: OWN_HOSTS, anonId }) : null;
+    await Promise.all([noteSharedVisit(redis, recorded, visitor), noteConsent(redis, recorded, visitor)]);
     const sheet = storefrontRows(event, recorded, visitor);
     await Promise.all([
       postLiveEvent(event, recorded, visitor),

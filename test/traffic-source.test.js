@@ -32,3 +32,10 @@ test('the store itself, no referrer, or junk read as direct', () => {
   assert.equal(trafficSource({ referrer: 'not a url' }).label, 'direct');
   assert.equal(trafficSource().label, 'direct');
 });
+
+test('a shared link is its own source, with the link id as campaign', () => {
+  assert.deepEqual(
+    trafficSource({ params: { utm_source: 'share', utm_medium: 'link', utm_campaign: 'emma-x7k2pq' } }),
+    { label: 'shared link', campaign: 'emma-x7k2pq' }
+  );
+});

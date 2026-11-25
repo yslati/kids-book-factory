@@ -23,6 +23,8 @@ test('product pages show the book title, linked to the page the visitor saw', (t
   withStore(t);
   assert.equal(storeOrigin(), STORE);
   assert.equal(pageLink('/products/' + HANDLE, titles), '[The Midnight Elf Workshop](' + STORE + '/products/' + HANDLE + ')');
+  assert.equal(pageLink('/pages/create-your-book', titles), '[Book preview](' + STORE + '/pages/create-your-book)');
+  assert.equal(pageLink('/es/pages/create-your-book', titles), '[Book preview · es](' + STORE + '/es/pages/create-your-book)');
   assert.equal(pageLink('/fr/products/' + HANDLE, titles), '[The Midnight Elf Workshop · fr](' + STORE + '/fr/products/' + HANDLE + ')');
   assert.equal(pageLink('/collections/all', titles), '[/collections/all](' + STORE + '/collections/all)');
   assert.equal(pageLink('/products/unknown-book', titles), '[/products/unknown-book](' + STORE + '/products/unknown-book)');

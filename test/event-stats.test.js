@@ -134,7 +134,7 @@ test('consent given mid-visit continues the cookieless visit', async () => {
   const anon = await recordEvent(redis, page('anon:2', '/', { consented: false, referrer: 'https://www.google.com' }));
   assert.equal(anon.visit, 1);
   const after = await recordEvent(redis, page('c10', '/products/book', { consented: true }), { anonId: 'anon:2' });
-  assert.deepEqual(after, { visit: null, source: null });
+  assert.deepEqual(after, { visit: null, source: null, continued: true });
   assert.equal(redis.hashes.get(key('count')).visits, 1);
   assert.equal(redis.strings.get('kbf:ev:source:c10'), redis.strings.get('kbf:ev:source:anon:2'));
   assert.equal(redis.strings.get('kbf:ev:visits:c10'), 1);
