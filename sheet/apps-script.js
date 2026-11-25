@@ -308,7 +308,7 @@ function analytics() {
   sheet.getRange(1, 2).setValue('Book to Kids analytics').setFontSize(20).setFontWeight('bold').setFontColor('#3c4858');
   sheet.getRange(2, 2).setValue('Live from the other tabs. Daily totals (this table and the daily charts) include Morocco; every other chart leaves it out. Rebuild: Extensions → Apps Script → Run analytics.')
     .setFontColor('#777777').setFontStyle('italic');
-  const metrics = ['Visitors', 'Visits', 'Product views', 'Previews started', 'Previews ready', 'Added to cart', 'Checkouts started', 'Orders', 'Revenue'];
+  const metrics = ['Visitors', 'Visits', 'Product views', 'Previews started', 'Previews ready', 'Added to cart', 'Checkouts started', 'Orders', 'Books sold', 'Revenue'];
   const rates = [['Visitor → preview', 'Previews started', 'Visitors'], ['Preview → cart', 'Added to cart', 'Previews ready'],
     ['Cart → order', 'Orders', 'Added to cart'], ['Visitor → order', 'Orders', 'Visitors']];
   const windows = [['All time', null], ['Last 30 days', [29, 0]], ['Last 7 days', [6, 0]], ['Previous 7 days', [13, 7]]];
@@ -345,8 +345,8 @@ function analytics() {
   heading('Traffic');
   line(data('Daily traffic', ['Day', 'Visitors', 'Visits', 'Page views'], daily('Daily', ['Visitors', 'Visits', 'Page views']), SERIES_DAYS),
     'Visitors, visits and page views per day (last ' + SERIES_DAYS + ' days)');
-  columns(data('Weekly', ['Week', 'Visitors', 'Previews started', 'Added to cart', 'Orders'],
-    daily('Weekly', ['Visitors', 'Previews started', 'Added to cart', 'Orders']), 30), 'Weekly totals', { legend: { position: 'bottom' } });
+  columns(data('Weekly', ['Week', 'Visitors', 'Previews started', 'Added to cart', 'Orders', 'Books sold'],
+    daily('Weekly', ['Visitors', 'Previews started', 'Added to cart', 'Orders', 'Books sold']), 30), 'Weekly totals', { legend: { position: 'bottom' } });
   line(data('Visits per day', ['Day', 'Visits'], countBy('Visits', dayOf('Visits'), SERIES_DAYS, { byKey: true, where: "Col1 >= '" + since + "'" }), SERIES_DAYS),
     'Visits per day, without Morocco', { legend: { position: 'none' } });
   pie(data('Visits by source', ['Source', 'Visits'], countBy('Visits', text('Visits', 'Source'), 10), 10), 'Where visits come from');
@@ -381,8 +381,9 @@ function analytics() {
   bars(funnel, 'Funnel: visitors to orders (all time)', { colors: ['#6aa84f'] });
   line(data('Daily funnel', ['Day', 'Previews started', 'Previews ready', 'Added to cart', 'Checkouts started', 'Orders'],
     daily('Daily', ['Previews started', 'Previews ready', 'Added to cart', 'Checkouts started', 'Orders']), SERIES_DAYS), 'Funnel steps per day');
-  chart(T.COMBO, data('Daily revenue', ['Day', 'Revenue', 'Orders'], daily('Daily', ['Revenue', 'Orders']), SERIES_DAYS), 'Revenue (bars) and orders (line) per day',
-    { seriesType: 'bars', series: { 1: { type: 'line', targetAxisIndex: 1, pointSize: 5 } }, colors: ['#6aa84f', '#cc4125'] });
+  chart(T.COMBO, data('Daily revenue', ['Day', 'Revenue', 'Orders', 'Books sold'], daily('Daily', ['Revenue', 'Orders', 'Books sold']), SERIES_DAYS),
+    'Revenue (bars), orders and books sold (lines) per day', { seriesType: 'bars', series: { 1: { type: 'line', targetAxisIndex: 1, pointSize: 5 },
+      2: { type: 'line', targetAxisIndex: 1, pointSize: 5 } }, colors: ['#6aa84f', '#cc4125', '#3d85c6'] });
   const raw = data('Daily conversion', ['Day', 'Visitors', 'Previews ready', 'Added to cart', 'Orders'],
     daily('Daily', ['Visitors', 'Previews ready', 'Added to cart', 'Orders']), SERIES_DAYS);
   const top = raw.getRow() + 1;
