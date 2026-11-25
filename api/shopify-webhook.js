@@ -15,7 +15,7 @@ import { getRedis } from '../lib/redis.js';
 import { readJourney, recordOrder } from '../lib/event-stats.js';
 import { postLiveEvent } from '../lib/event-feed.js';
 import { appendRows, storefrontRows } from '../lib/sheet.js';
-import { orderFromWebhook, validSignature } from '../lib/shopify-order.js';
+import { isFirstOrder, orderFromWebhook, validSignature } from '../lib/shopify-order.js';
 import { trafficSource } from '../lib/traffic-source.js';
 import { rawBody } from '../lib/raw-body.js';
 import { Step, addStep, linkCustomer, linkOrder } from '../lib/visitor-log.js';
@@ -32,6 +32,7 @@ async function record(order, requestId) {
     const redis = getRedis();
     const counted = await recordOrder(redis, order.id, event, source);
     if (counted === false) return;
+    if (event.checkout.firstOrder === null) event.checkout.firstOrder = await isFirstOrder(order.customerId);
     const journey = await readJourney(redis, order.id);
     const visitor = { ...order.visitor, requestId, id: (journey && journey.visitorId) || '' };
     if (visitor.id) {
