@@ -82,7 +82,7 @@ test('the bot page escapes the name and carries the cover as og:image', () => {
   });
   assert.equal(status, 200);
   assert.ok(!html.includes('<script>"x"'));
-  assert.ok(html.includes('&lt;script&gt;&quot;x&quot;&lt;/script&gt;&#39;s personalised book'));
+  assert.ok(html.includes('&lt;script&gt;&quot;x&quot;&lt;/script&gt; is the star of their own storybook'));
   assert.ok(html.includes('<meta property="og:image" content="' + BUCKET + '/previews/a.jpg">'));
   assert.ok(html.includes('<meta property="og:url" content="https://s.booktokids.com/emma-x7k2pq">'));
   assert.ok(html.includes('summary_large_image'));
@@ -91,7 +91,17 @@ test('the bot page escapes the name and carries the cover as og:image', () => {
 test('the bot page leaves out og:image when there is no cover', () => {
   const { html } = renderSharePage({ shortUrl: 'https://s.booktokids.com/x', target: GOOD, childName: '', coverUrl: '' });
   assert.ok(!html.includes('og:image'));
-  assert.ok(html.includes('A personalised book'));
+  assert.ok(html.includes('A child is the star of this storybook'));
+});
+
+test('the bot page speaks the sharer\'s storefront language', () => {
+  const fr = renderSharePage({ shortUrl: 'https://s.booktokids.com/x', target: STORE + '/fr/pages/create-your-book?s=' + S, childName: 'Emma', coverUrl: '' });
+  assert.ok(fr.html.includes('<html lang="fr">'));
+  assert.ok(fr.html.includes('Emma est la vedette de son propre livre'));
+  const byBook = renderSharePage({ shortUrl: 'https://s.booktokids.com/x', target: GOOD, childName: 'Emma', coverUrl: '', language: 'de' });
+  assert.ok(byBook.html.includes('Emma ist der Star im eigenen Bilderbuch'));
+  const unknown = renderSharePage({ shortUrl: 'https://s.booktokids.com/x', target: GOOD, childName: 'Emma', coverUrl: '', language: 'ja' });
+  assert.ok(unknown.html.includes('Emma is the star of their own storybook'));
 });
 
 test('the expired page links back to the store', () => {
