@@ -24,7 +24,7 @@ const TAB_COLORS = {
   Logs: '#999999'
 };
 // A new column goes right after its neighbour when the tab has it, else at the end.
-const PLACE_AFTER = { Language: 'Age', Cost: 'Model' };
+const PLACE_AFTER = { Language: 'Age', Cost: 'Model', 'Books sold': 'Orders' };
 // Column widths in pixels; other columns fit their content, up to MAX_WIDTH.
 const WIDE = ['Prompt', 'Story idea', 'Extra details', 'Details', 'Journey', 'Items', 'Reported problem', 'Error',
   'Top sources', 'Orders by source', 'Top pages', 'Top countries', 'Top books', 'Top searches'];
@@ -222,6 +222,8 @@ const CHART_WIDTH = 600;
 const CHART_HEIGHT = 340;
 const CHART_ROWS = 18;
 const SERIES_DAYS = 60;
+// Rows in the per-book tables and charts.
+const BOOK_ROWS = 30;
 
 // Run from the editor (Run → analytics) to create or rebuild the tab.
 function analytics() {
@@ -430,17 +432,17 @@ function analytics() {
   pie(data('Story occasions', ['Occasion', 'Stories'], countBy('Custom stories', text('Custom stories', 'Occasion'), 8), 8), 'Custom story occasions');
 
   heading('Carts, checkouts and orders');
-  bars(data('Books added to cart', ['Book', 'Copies'], totalBy('Carts', text('Carts', 'Book'), ref('Carts', 'Quantity'), 15), 15), 'Books added to cart (copies)');
+  bars(data('Books added to cart', ['Book', 'Copies'], totalBy('Carts', text('Carts', 'Book'), ref('Carts', 'Quantity'), BOOK_ROWS), BOOK_ROWS), 'Books added to cart (copies)');
   pie(data('Cart covers', ['Variant', 'Adds'], countBy('Carts', text('Carts', 'Variant'), 6), 6), 'Hardcover vs softcover in carts');
   pie(data('Cart sources', ['Source', 'Adds'], countBy('Carts', text('Carts', 'Source'), 8), 8), 'Add to cart by traffic source');
   bars(data('Checkouts by country', ['Country', 'Checkouts'], countBy('Checkouts', text('Checkouts', 'Country'), 10), 10), 'Checkouts started by country');
-  bars(data('Books sold', ['Book', 'Copies'], totalBy('Orders', text('Orders', 'Book'), ref('Orders', 'Quantity'), 15), 15), 'Books sold (copies)', { colors: ['#6aa84f'] });
+  bars(data('Books sold', ['Book', 'Copies'], totalBy('Orders', text('Orders', 'Book'), ref('Orders', 'Quantity'), BOOK_ROWS), BOOK_ROWS), 'Books sold (copies)', { colors: ['#6aa84f'] });
   pie(data('Order covers', ['Cover', 'Copies'], totalBy('Orders', text('Orders', 'Cover'), ref('Orders', 'Quantity'), 6), 6), 'Hardcover vs softcover sold');
   pie(data('Orders by source', ['Source', 'Orders'], perOrder(text('Orders', 'Source'), 8), 8), 'Orders by traffic source');
   bars(data('Revenue by country', ['Country', 'Revenue'], perOrder(text('Orders', 'Country'), 10, ref('Orders', 'Order total')), 10), 'Revenue by country', { colors: ['#6aa84f'] });
   pie(data('New vs returning customers', ['Customer', 'Orders'], perOrder(text('Orders', 'Customer'), 4), 4), 'First orders vs returning customers');
   bars(data('Discount codes', ['Code', 'Checkouts'], countBy('Checkouts', text('Checkouts', 'Discount codes'), 10), 10), 'Discount codes used at checkout');
-  bars(data('Revenue by book', ['Book', 'Revenue'], totalBy('Orders', text('Orders', 'Book'), ref('Orders', 'Price'), 15), 15), 'Revenue by book', { colors: ['#6aa84f'] });
+  bars(data('Revenue by book', ['Book', 'Revenue'], totalBy('Orders', text('Orders', 'Book'), 'ARRAYFORMULA(' + ref('Orders', 'Price') + '*' + ref('Orders', 'Quantity') + ')', BOOK_ROWS), BOOK_ROWS), 'Revenue by book', { colors: ['#6aa84f'] });
   pie(data('Order devices', ['Device', 'Orders'], perOrder('ARRAYFORMULA(IF(' + text('Orders', 'Device') + '="","",IF(REGEXMATCH(' + text('Orders', 'Device') +
     ',"iOS|Android"),"Phone or tablet","Computer")))', 3), 3), 'Orders: phone vs computer');
 

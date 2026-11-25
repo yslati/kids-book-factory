@@ -227,7 +227,7 @@ test('a Daily row has the funnel, revenue and top lists', () => {
     visitors: 120,
     count: { visits: 150, page_viewed: 600, product_viewed: 200, preview_started: 12, preview_ready: 11, preview_failed: 1, product_added_to_cart: 4, checkout_started: 3, checkout_completed: 2, share_clicked: 3, share_opened: 5, share_unfurled: 2, crawler_visits: 7, bot_visits: 3 },
     pages: { '/': 300, '/products/a': 50 },
-    books: { 'views:a': 50, 'carts:A': 2 },
+    books: { 'views:a': 50, 'carts:A': 2, 'orders:A': 2, 'orders:B': 1 },
     searches: { unicorn: 4 },
     sources: { google: 80, direct: 70 },
     countries: { FR: 90, US: 30 },
@@ -237,16 +237,25 @@ test('a Daily row has the funnel, revenue and top lists', () => {
   assert.deepEqual(row, {
     Day: '2026-10-24', Visitors: 120, Visits: 150, 'Visits without cookie consent': 0, 'Page views': 600, 'Product views': 200, 'Collection views': 0,
     Searches: 0, 'Cart views': 0, 'Previews started': 12, 'Previews ready': 11, 'Previews failed': 1,
-    'Added to cart': 4, 'Checkouts started': 3, Orders: 2, Revenue: 89.98, Currency: 'USD',
+    'Added to cart': 4, 'Checkouts started': 3, Orders: 2, 'Books sold': 3, Revenue: 89.98, Currency: 'USD',
     'Share clicks': 3, 'Shared links opened': 5, 'Chat link previews': 2,
     'Crawler visits': 7, 'Bot visits': 3,
     'Top sources': 'google (80), direct (70)', 'Orders by source': 'google (2)',
-    'Top books': 'a (50 views, 0 previews, 0 carts, 0 orders); A (0 views, 0 previews, 2 carts, 0 orders)', 'Top searches': 'unicorn (4)',
+    'Top books': 'a (50 views, 0 previews, 0 carts, 0 orders); A (0 views, 0 previews, 2 carts, 2 orders); B (0 views, 0 previews, 0 carts, 1 orders)', 'Top searches': 'unicorn (4)',
     'Top pages': '/ (300), /products/a (50)', 'Top countries': 'France (90), United States (30)'
   });
   const mixed = dailyRow({ day: '2026-10-25', visitors: 0, count: {}, pages: {}, sources: {}, countries: {}, revenue: { USD: 10, EUR: 5 }, orderSources: {} });
   assert.equal(mixed.Revenue, '10 USD + 5 EUR');
   assert.equal(mixed.Currency, 'USD, EUR');
+});
+
+test('a Daily row keeps every ordered or carted book beyond the 10 most viewed', () => {
+  const books = { 'orders:Sold': 2, 'carts:Carted': 1 };
+  for (let i = 0; i < 12; i++) books['views:b' + i] = 100 - i;
+  const row = dailyRow({ day: '2026-11-18', visitors: 0, count: {}, books, revenue: {} });
+  const titles = row['Top books'].split('; ').map((s) => s.split(' (')[0]);
+  assert.deepEqual(titles, ['b0', 'b1', 'b2', 'b3', 'b4', 'b5', 'b6', 'b7', 'b8', 'b9', 'Carted', 'Sold']);
+  assert.equal(row['Books sold'], 2);
 });
 
 test('a Weekly row has the same totals as a day, under its week', () => {
