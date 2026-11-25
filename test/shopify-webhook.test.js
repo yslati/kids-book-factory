@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { PassThrough, Readable } from 'node:stream';
 import webhook from '../api/shopify-webhook.js';
-import { orderFromWebhook, validSignature } from '../lib/shopify-order.js';
+import { isFirstOrder, orderFromWebhook, validSignature } from '../lib/shopify-order.js';
 
 const SECRET = 'test-webhook-secret';
 const sign = (body, secret = SECRET) => createHmac('sha256', secret).update(body).digest('base64');
@@ -67,6 +67,28 @@ test('an order without a landing page, customer or address still works', () => {
   assert.equal(order.visitor.country, '');
   assert.equal(orderFromWebhook(null), null);
   assert.equal(orderFromWebhook({ name: 'no id' }), null);
+});
+
+test('first order: from the customer\'s order count in Shopify, null when unknown', async (t) => {
+  const saved = { shop: process.env.SHOPIFY_SHOP, token: process.env.SHOPIFY_ADMIN_TOKEN };
+  process.env.SHOPIFY_SHOP = 'test.myshopify.com';
+  process.env.SHOPIFY_ADMIN_TOKEN = 'token';
+  t.after(() => {
+    for (const [key, value] of [['SHOPIFY_SHOP', saved.shop], ['SHOPIFY_ADMIN_TOKEN', saved.token]]) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  });
+  t.mock.method(console, 'error', () => {});
+  const asked = [];
+  const count = (n) => async (q, vars) => { asked.push(vars.id); return { customer: n === undefined ? null : { numberOfOrders: n } }; };
+  assert.equal(await isFirstOrder('31427367502074', count('1')), true);
+  assert.equal(asked[0], 'gid://shopify/Customer/31427367502074');
+  assert.equal(await isFirstOrder('31427367502074', count('3')), false);
+  assert.equal(await isFirstOrder('31427367502074', count('0')), null, 'count not updated yet');
+  assert.equal(await isFirstOrder('31427367502074', count()), null, 'customer not found');
+  assert.equal(await isFirstOrder('31427367502074', async () => { throw new Error('shopify-admin-403'); }), null);
+  assert.equal(await isFirstOrder('', count('1')), null, 'guest checkout');
+  assert.equal(asked.length, 4, 'no lookup without a customer');
 });
 
 function res() {
