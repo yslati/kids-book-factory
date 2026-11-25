@@ -35,7 +35,7 @@ test('signature: the base64 HMAC-SHA256 of the raw body with the store key', () 
   assert.equal(validSignature(body, sign(body), ''), false, 'no key, nothing passes');
 });
 
-test('an order keeps books, prices, codes, campaign tags, country and browser; never people', () => {
+test('an order keeps books, prices, codes, campaign tags, country and browser; people only in buyer', () => {
   const order = orderFromWebhook(ORDER);
   assert.equal(order.id, '6812345678901');
   assert.equal(order.test, false);
@@ -54,7 +54,8 @@ test('an order keeps books, prices, codes, campaign tags, country and browser; n
   assert.equal(order.visitor.city, '');
   assert.equal(order.visitor.ip, '');
   assert.equal(order.customerId, '31427367502074');
-  assert.ok(!/Emma|Ann|parent@|Lyon|Rue|203\.0\.113/.test(JSON.stringify(order)));
+  assert.deepEqual(order.buyer, { name: 'Ann', email: 'parent@example.com' });
+  assert.ok(!/Emma|Ann|parent@|Lyon|Rue|203\.0\.113/.test(JSON.stringify({ event: order.event, visitor: order.visitor })));
 });
 
 test('an order without a landing page, customer or address still works', () => {
@@ -62,6 +63,7 @@ test('an order without a landing page, customer or address still works', () => {
   assert.equal(order.event.path, '/');
   assert.equal(order.event.checkout.firstOrder, null);
   assert.equal(order.customerId, '');
+  assert.deepEqual(order.buyer, { name: '', email: '' });
   assert.equal(order.visitor.country, '');
   assert.equal(orderFromWebhook(null), null);
   assert.equal(orderFromWebhook({ name: 'no id' }), null);
