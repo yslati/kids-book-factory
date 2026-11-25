@@ -58,10 +58,11 @@ function opensKey(id) {
 }
 
 // The preview page with the tags that mark its visit as one from a share.
-function sharedVisitUrl(url) {
+function sharedVisitUrl(url, id) {
   const u = new URL(url);
   u.searchParams.set('utm_source', 'share');
   u.searchParams.set('utm_medium', 'link');
+  u.searchParams.set('utm_campaign', id);
   return u.toString();
 }
 
@@ -156,7 +157,7 @@ async function open(req, res) {
   if (!isbot(req.headers['user-agent'] || '')) {
     if (req.query && req.query[TEAM_PARAM] === '1') return res.redirect(302, target.url);
     waitUntil(recordOpen(req, id, target));
-    return res.redirect(302, sharedVisitUrl(target.url));
+    return res.redirect(302, sharedVisitUrl(target.url, id));
   }
   // A chat app fetching the link to show its preview: the link was just sent.
   // Counted, and shown in the crawler stream with the app's name.

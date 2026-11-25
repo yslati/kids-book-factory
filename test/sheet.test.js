@@ -162,6 +162,19 @@ test('a new visit goes to Visits with its source and landing page', () => {
   assert.equal(storefrontRows({ name: 'product_viewed', product: {} }, null, visitor), null, 'views are only counted');
 });
 
+test('a visit from a shared link names the preview page and who shared it', () => {
+  const out = storefrontRows(
+    { name: 'page_viewed', path: '/fr/pages/create-your-book' },
+    { visit: 1, source: { label: 'shared link', campaign: 'emma-x7k2pq' }, sharedBy: 'V-1a2b3c4d' },
+    visitor
+  );
+  const row = out.rows[0];
+  assert.equal(row.Source, 'shared link');
+  assert.equal(row.Campaign, 'emma-x7k2pq');
+  assert.equal(row['Shared by'], 'V-1a2b3c4d');
+  assert.ok(row['Landing page'].startsWith('Book preview: ') && row['Landing page'].endsWith('/fr/pages/create-your-book'));
+});
+
 test('a visit without cookie consent has no visit number', () => {
   const out = storefrontRows(
     { name: 'page_viewed', path: '/', consented: false },
