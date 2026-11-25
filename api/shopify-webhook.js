@@ -1,8 +1,9 @@
 // POST /api/shopify-webhook
 // Shopify's "Order creation" store webhook (Settings → Notifications →
 // Webhooks, JSON): every order, whatever the buyer's browser blocked or
-// consented to. Posts it to #events, adds it to the Orders tab and counts it
-// in the daily totals, once per order (lib/shopify-order.js).
+// consented to. Posts it to #events, adds it to the Orders tab (with the
+// buyer's name and email, which #events never gets) and counts it in the
+// daily totals, once per order (lib/shopify-order.js).
 //
 // Signed with SHOPIFY_WEBHOOK_SECRET over the raw body → 401 when the
 // signature doesn't match, else 200 before any posting, which Shopify needs
@@ -43,6 +44,7 @@ async function record(order, requestId) {
     }
     const recorded = { visit: null, source, journey };
     const sheet = storefrontRows(event, recorded, visitor);
+    if (sheet) sheet.rows = sheet.rows.map((row) => ({ ...row, 'Customer name': order.buyer.name, Email: order.buyer.email }));
     await Promise.all([
       postLiveEvent(event, recorded, visitor),
       sheet && appendRows(sheet.tab, sheet.rows)
