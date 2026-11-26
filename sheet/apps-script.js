@@ -95,6 +95,8 @@ const SCALES = [
     'Share clicks', 'Shared links opened'], '#ffffff', '#c9dcff'],
   ['Previews failed', '#ffffff', '#fbd5d2']
 ];
+// Row tints that group the books of one order, alternating between orders.
+const ORDER_TINTS = ['#e3f4f4', '#fbf0dc'];
 const MAX_ROWS = 50;
 // Rows stay one line high, so a prompt's line breaks don't stretch them;
 // the cell still holds the full text.
@@ -207,6 +209,17 @@ function style(sheet) {
     rules.push(SpreadsheetApp.newConditionalFormatRule().setRanges([sheet.getRange(col + '2:' + col)])
       .setGradientMinpoint(low).setGradientMaxpoint(high).build());
   }));
+  // Every row of an order with several books gets the same tint; COUNTUNIQUE
+  // numbers the orders so the tint alternates. Last, so chips and scales win.
+  const order = sheet.getName() === 'Orders' ? letter('Order') : '';
+  if (order) {
+    const o = '$' + order;
+    ORDER_TINTS.forEach((tint, i) => rules.push(SpreadsheetApp.newConditionalFormatRule()
+      .setRanges([sheet.getRange('A2:' + sheet.getRange(1, width).getA1Notation().replace(/\d+/, ''))])
+      .whenFormulaSatisfied('=IF(' + o + '2="",FALSE,IF(COUNTIF(' + o + ':' + o + ',' + o + '2)>1,' +
+        (i ? 'ISEVEN' : 'ISODD') + '(COUNTUNIQUE(' + o + '$2:' + o + '2)),FALSE))')
+      .setBackground(tint).build()));
+  }
   sheet.setConditionalFormatRules(rules);
 }
 
