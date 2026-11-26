@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
-import { coverForStorage } from '../lib/cover-image.js';
+import { LOGO, coverForStorage } from '../lib/cover-image.js';
 
 // Saved tagged as Display P3, so the PNG holds P3 numbers (~189, 124, 87):
 // only a real conversion to sRGB gets this colour back.
@@ -61,4 +61,35 @@ test('stores the original bytes and extension when the cover cannot be converted
   assert.deepEqual(await coverForStorage(notAnImage, null),
     { body: notAnImage, contentType: 'image/jpeg', ext: 'jpg' });
   assert.equal(warn.mock.callCount(), 2);
+});
+
+async function pixelAt(jpeg, x, y) {
+  const { data, info } = await sharp(jpeg).raw().toBuffer({ resolveWithObject: true });
+  const i = (y * info.width + x) * info.channels;
+  return Array.from(data.subarray(i, i + 3));
+}
+
+test('adds the logo badge at the bottom centre and leaves the rest of the cover alone', async () => {
+  const black = await sharp({ create: { width: 400, height: 300, channels: 3, background: '#000' } }).png().toBuffer();
+  const cover = await coverForStorage(black, 'image/png', { logo: true });
+
+  const meta = await sharp(cover.body).metadata();
+  assert.deepEqual([meta.format, meta.width, meta.height], ['jpeg', 400, 300]);
+  // Just inside the badge's top edge, above the logo: the white pill.
+  const badgeTop = 300 - Math.round(300 * LOGO.bottom) - 1;
+  const [pill] = await pixelAt(cover.body, 200, badgeTop - 2);
+  assert.ok(pill > 200, 'the bottom of the cover shows no white pill: ' + pill);
+  // The corners and the top stay as painted.
+  for (const [x, y] of [[5, 5], [200, 20], [5, 295], [395, 295]]) {
+    const [r] = await pixelAt(cover.body, x, y);
+    assert.ok(r < 20, 'pixel ' + x + ',' + y + ' changed: ' + r);
+  }
+});
+
+test('leaves the logo off covers stored without it', async () => {
+  const black = await sharp({ create: { width: 400, height: 300, channels: 3, background: '#000' } }).png().toBuffer();
+  const cover = await coverForStorage(black, 'image/png');
+  const badgeTop = 300 - Math.round(300 * LOGO.bottom) - 1;
+  const [r] = await pixelAt(cover.body, 200, badgeTop - 2);
+  assert.ok(r < 20);
 });
