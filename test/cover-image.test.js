@@ -62,3 +62,32 @@ test('stores the original bytes and extension when the cover cannot be converted
     { body: notAnImage, contentType: 'image/jpeg', ext: 'jpg' });
   assert.equal(warn.mock.callCount(), 2);
 });
+
+// The brightest red value in a box of the cover.
+async function brightestIn(jpeg, box) {
+  const { data } = await sharp(jpeg).extract(box).raw().toBuffer({ resolveWithObject: true });
+  let max = 0;
+  for (let i = 0; i < data.length; i += 3) max = Math.max(max, data[i]);
+  return max;
+}
+
+const BLACK_COVER = () => sharp({ create: { width: 400, height: 300, channels: 3, background: '#000' } }).png().toBuffer();
+// Where the logo sits on a 400x300 cover: the bottom centre.
+const LOGO_BOX = { left: 140, top: 230, width: 120, height: 65 };
+
+test('adds the logo at the bottom centre and leaves the rest of the cover alone', async () => {
+  const cover = await coverForStorage(await BLACK_COVER(), 'image/png', { logo: true });
+
+  const meta = await sharp(cover.body).metadata();
+  assert.deepEqual([meta.format, meta.width, meta.height], ['jpeg', 400, 300]);
+  assert.ok(await brightestIn(cover.body, LOGO_BOX) > 200, 'no logo at the bottom centre');
+  // Everything outside the logo stays as painted.
+  for (const box of [{ left: 0, top: 0, width: 400, height: 220 }, { left: 0, top: 220, width: 120, height: 80 }, { left: 280, top: 220, width: 120, height: 80 }]) {
+    assert.ok(await brightestIn(cover.body, box) < 20, 'cover changed in ' + JSON.stringify(box));
+  }
+});
+
+test('leaves the logo off covers stored without it', async () => {
+  const cover = await coverForStorage(await BLACK_COVER(), 'image/png');
+  assert.ok(await brightestIn(cover.body, LOGO_BOX) < 20);
+});
