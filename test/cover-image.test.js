@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
-import { LOGO, coverForStorage } from '../lib/cover-image.js';
+import { coverForStorage } from '../lib/cover-image.js';
 
 // Saved tagged as Display P3, so the PNG holds P3 numbers (~189, 124, 87):
 // only a real conversion to sRGB gets this colour back.
@@ -63,33 +63,31 @@ test('stores the original bytes and extension when the cover cannot be converted
   assert.equal(warn.mock.callCount(), 2);
 });
 
-async function pixelAt(jpeg, x, y) {
-  const { data, info } = await sharp(jpeg).raw().toBuffer({ resolveWithObject: true });
-  const i = (y * info.width + x) * info.channels;
-  return Array.from(data.subarray(i, i + 3));
+// The brightest red value in a box of the cover.
+async function brightestIn(jpeg, box) {
+  const { data } = await sharp(jpeg).extract(box).raw().toBuffer({ resolveWithObject: true });
+  let max = 0;
+  for (let i = 0; i < data.length; i += 3) max = Math.max(max, data[i]);
+  return max;
 }
 
-test('adds the logo badge at the bottom centre and leaves the rest of the cover alone', async () => {
-  const black = await sharp({ create: { width: 400, height: 300, channels: 3, background: '#000' } }).png().toBuffer();
-  const cover = await coverForStorage(black, 'image/png', { logo: true });
+const BLACK_COVER = () => sharp({ create: { width: 400, height: 300, channels: 3, background: '#000' } }).png().toBuffer();
+// Where the logo sits on a 400x300 cover: the bottom centre.
+const LOGO_BOX = { left: 140, top: 230, width: 120, height: 65 };
+
+test('adds the logo at the bottom centre and leaves the rest of the cover alone', async () => {
+  const cover = await coverForStorage(await BLACK_COVER(), 'image/png', { logo: true });
 
   const meta = await sharp(cover.body).metadata();
   assert.deepEqual([meta.format, meta.width, meta.height], ['jpeg', 400, 300]);
-  // Just inside the badge's top edge, above the logo: the white pill.
-  const badgeTop = 300 - Math.round(300 * LOGO.bottom) - 1;
-  const [pill] = await pixelAt(cover.body, 200, badgeTop - 2);
-  assert.ok(pill > 200, 'the bottom of the cover shows no white pill: ' + pill);
-  // The corners and the top stay as painted.
-  for (const [x, y] of [[5, 5], [200, 20], [5, 295], [395, 295]]) {
-    const [r] = await pixelAt(cover.body, x, y);
-    assert.ok(r < 20, 'pixel ' + x + ',' + y + ' changed: ' + r);
+  assert.ok(await brightestIn(cover.body, LOGO_BOX) > 200, 'no logo at the bottom centre');
+  // Everything outside the logo stays as painted.
+  for (const box of [{ left: 0, top: 0, width: 400, height: 220 }, { left: 0, top: 220, width: 120, height: 80 }, { left: 280, top: 220, width: 120, height: 80 }]) {
+    assert.ok(await brightestIn(cover.body, box) < 20, 'cover changed in ' + JSON.stringify(box));
   }
 });
 
 test('leaves the logo off covers stored without it', async () => {
-  const black = await sharp({ create: { width: 400, height: 300, channels: 3, background: '#000' } }).png().toBuffer();
-  const cover = await coverForStorage(black, 'image/png');
-  const badgeTop = 300 - Math.round(300 * LOGO.bottom) - 1;
-  const [r] = await pixelAt(cover.body, 200, badgeTop - 2);
-  assert.ok(r < 20);
+  const cover = await coverForStorage(await BLACK_COVER(), 'image/png');
+  assert.ok(await brightestIn(cover.body, LOGO_BOX) < 20);
 });
