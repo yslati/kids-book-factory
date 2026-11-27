@@ -3,7 +3,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { reportClientEvent, streamFor, withReporting } from '../lib/report.js';
+import { normaliseClientEvent, reportClientEvent, streamFor, thirdPartyCause, withReporting } from '../lib/report.js';
 import { resetDiscordThrottle, setDiscordOutbox } from '../lib/discord.js';
 import { Audience, CrawlerKind, Verification } from '../lib/audience.js';
 import { TABS } from '../lib/sheet.js';
@@ -112,4 +112,31 @@ test('a stream without a webhook falls back to #logs, so nothing is lost before 
   reportClientEvent(req(PERSON), { level: 'warn', code: 'third-party-error', message: 'x', stack: '', page: '/', context: {} });
   await settle();
   assert.deepEqual(posts.map((p) => p.stream), ['LOGS', 'LOGS']);
+});
+
+test('third-party reports and their repeat summary are info, with the likely cause', async (t) => {
+  const posts = captureStreams(t);
+  const shopify = normaliseClientEvent({
+    level: 'warn', code: 'third-party-rejection', message: 'Failed to fetch',
+    stack: 'TypeError: Failed to fetch\n    at b.exportTo (https://cdn.shopify.com/shopifycloud/shop-js/modules/v2/chunk.utils.esm.js:1:6141)'
+  });
+  const summary = normaliseClientEvent({ level: 'warn', code: 'third-party-summary', message: '×3 Failed to fetch', context: { script: '/cdn/wpm/b154515.js' } });
+  assert.equal(shopify.level, 'info');
+  assert.equal(summary.level, 'info');
+  assert.match(shopify.cause, /^Shopify's own analytics or pixel script lost a network request/);
+  assert.match(summary.cause, /^Shopify's own analytics/);
+  assert.equal(normaliseClientEvent({ level: 'warn', code: 'page-summary', message: '×2 boom' }).cause, undefined);
+
+  reportClientEvent(req(PERSON), shopify);
+  reportClientEvent(req(PERSON), summary);
+  await settle();
+  assert.deepEqual(posts.map((p) => p.stream), ['THIRD_PARTY', 'THIRD_PARTY']);
+  assert.equal(posts[0].embed.title, 'ℹ️ third-party-rejection');
+  assert.equal(posts[0].embed.fields[0].name, 'Cause');
+});
+
+test('the cause tells network failures from script errors, and Shopify from other scripts', () => {
+  assert.match(thirdPartyCause({ message: 'Load failed' }), /^A script that isn't the theme's .* lost a network request/);
+  assert.match(thirdPartyCause({ message: 't.entries.at is not a function', stack: 'at https://booktokids.com/cdn/shopifycloud/perf-kit/shopify-perf-kit-3.16.1.min.js:1:94620' }), /^An error inside Shopify's own scripts/);
+  assert.match(thirdPartyCause({ message: 'x is undefined' }), /^An error in a script that isn't the theme's/);
 });

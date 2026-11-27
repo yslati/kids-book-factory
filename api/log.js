@@ -6,6 +6,7 @@
 //
 // Body: { level: 'error' | 'warn', code, message?, stack?, page?, context? }
 // sent as text/plain JSON, which a beacon can post with no CORS preflight.
+// Errors in other people's scripts are kept as info, with a likely cause.
 // → 204. Rejected reports get 400/403/429 and go no further, except that a
 // visitor's first 429 in an hour posts one notice to #logs.
 //
