@@ -107,11 +107,11 @@ test('the longest default prompt an order can produce fits the provider limit', 
   const longestLanguage = Object.keys(BOOK_LANGUAGES)
     .map(resolveBookLanguage)
     .sort((a, b) => b.name.length - a.name.length)[0];
-  // api/preview.js caps names at 40 characters and ages at 18.
+  // api/preview.js caps names at 40 characters and ages at 99.
   const prompt = buildPreviewPrompt(withHeroPose(DEFAULT_PREVIEW_PROMPT, 'x'.repeat(MAX_HERO_POSE_CHARS + 50)), {
     language: longestLanguage,
     childName: 'x'.repeat(40),
-    age: '18'
+    age: '99'
   });
   assert.ok(prompt.length <= PROVIDER_PROMPT_LIMIT, `prompt is ${prompt.length} characters`);
   // A free fix adds its corrections on top, however many and with or without the parent's words.

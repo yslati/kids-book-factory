@@ -194,7 +194,7 @@ async function handler(req, res) {
   const language = resolveBookLanguage(body.language);
   const childName = String(body.child_name || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 40);
   const ageNum = parseInt(body.age, 10);
-  const ageText = Number.isFinite(ageNum) && ageNum >= 0 && ageNum <= 18 ? String(ageNum) : '';
+  const ageText = Number.isFinite(ageNum) && ageNum >= 0 && ageNum <= 99 ? String(ageNum) : '';
   const locale = localeOf(body);
 
   if (!themeId || !photoKey || !generationId) {
